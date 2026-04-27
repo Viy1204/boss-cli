@@ -8,15 +8,18 @@ import {
 } from '../browser/index.js';
 import { createWaitManualLoginRequiredText, isBossChatIndexUrl } from '../common/auth.js';
 import { withBossSessionPage } from '../common/boss_session_page.js';
+import { runRequestAttachmentResume } from './action.js';
 
 export type SendChatMessageOptions = {
   text?: string;
+  requestResume?: boolean;
   signal?: AbortSignal;
 };
 
 export async function runSendChatMessage(options: SendChatMessageOptions): Promise<string> {
   const messageText = (options.text ?? '').trim();
   const signal = options.signal;
+  const requestResume = options.requestResume ?? false;
 
   if (!messageText) {
     throw new Error('请指定 --text <消息> 或 -t <消息>。');
@@ -54,7 +57,14 @@ export async function runSendChatMessage(options: SendChatMessageOptions): Promi
       await sleepRandom(120, 420, signal);
       await page.keyboard.press('Enter');
       await sleepRandom(SEND_AFTER_ENTER_MS.min, SEND_AFTER_ENTER_MS.max, signal);
-      return `已发送消息：${messageText}`;
+
+      if (!requestResume) {
+        return `已发送消息：${messageText}`;
+      }
+
+      await sleepRandom(1200, 2800, signal);
+      const resumeResult = await runRequestAttachmentResume(page);
+      return `已发送消息：${messageText}\n${resumeResult}`;
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);

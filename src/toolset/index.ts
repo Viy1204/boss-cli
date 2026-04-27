@@ -44,9 +44,11 @@ export async function implChatAction(params: {
 
 export async function implSendMessage(params: {
   text: string;
+  requestResume?: boolean;
 }): Promise<string> {
   return runSendChatMessage({
     text: params.text || undefined,
+    requestResume: params.requestResume,
   });
 }
 

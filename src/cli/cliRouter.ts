@@ -145,8 +145,9 @@ function printHelp(): void {
       操作: resume | not-fit | remark | agree-resume | request-attachment-resume | history | wechat
       request-attachment-resume：工具栏「求简历」，确认后向对方发送默认话术索要附件简历（需双方各至少发过一条消息）
       操作为 remark 时必须提供 --remark
-  boss send [--text <内容>] [-t <内容>]
+  boss send [--text <内容>] [-t <内容>] [--request-resume]
       仅发送文本消息（等价于在当前会话输入框发送后回车）
+      --request-resume：发送后延迟片刻自动执行「求简历」操作
   boss positions
       读取当前职位列表（含开放/待开放/已关闭状态）
   boss jd <name|序号>
@@ -162,6 +163,8 @@ function printHelp(): void {
       会消耗打招呼次数且单次成本较高，请谨慎使用
   boss deep-search [岗位关键字]（别名 deepsearch）
       进入「深度搜索」页并输出当前匹配结果列表；可选岗位关键字仅切换下拉框。不会点击「立即匹配」
+  
+  !!鉴于boss的风控机制存在更新，且本cli的功能在逐步完善中，若遇到部分操作问题，请先检查版本更新
 `);
 }
 
@@ -326,12 +329,13 @@ export async function executeCommand(argv: string[]): Promise<string> {
   }
 
   if (cmd === 'send') {
-    const { opts } = parseOpts(tail);
+    const { flags, opts } = parseOpts(tail);
     const text = opts.text?.trim() || opts.t?.trim() || '';
     if (!text) {
-      die('❌ 用法: send [--text <消息>] [-t <消息>]');
+      die('❌ 用法: send [--text <消息>] [-t <消息>] [--request-resume]');
     }
-    return implSendMessage({ text });
+    const requestResume = flags.has('request-resume');
+    return implSendMessage({ text, requestResume });
   }
 
   if (cmd === 'positions') {

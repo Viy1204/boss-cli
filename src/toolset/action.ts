@@ -198,7 +198,7 @@ async function runExchangeWechat(page: Page): Promise<string> {
  * 在聊天页左侧工具栏点击「求简历」，并在确认弹窗中点「确定」。
  * 平台规则：双方需各至少发送一条消息后该入口才可点；否则按钮为禁用态。
  */
-async function runRequestAttachmentResume(page: Page): Promise<string> {
+export async function runRequestAttachmentResume(page: Page): Promise<string> {
   await ensureInCandidateChat(page, '求简历');
 
   const availability = (await page.evaluate(`(() => {
@@ -256,7 +256,7 @@ async function runRequestAttachmentResume(page: Page): Promise<string> {
       for (const tip of tips) {
         if (!isVisible(tip)) continue;
         const raw = (tip.textContent ?? "").replace(/\\s+/g, "");
-        if (!raw.includes("请求简历")) continue;
+        if (!raw.includes("索取简历")) continue;
         const primary = tip.querySelector(".btn-box .boss-btn-primary");
         return primary instanceof HTMLElement;
       }
@@ -279,7 +279,7 @@ async function runRequestAttachmentResume(page: Page): Promise<string> {
     const tips = Array.from(document.querySelectorAll(".exchange-tooltip"));
     for (const tip of tips) {
       if (!isVisible(tip)) continue;
-      if (!norm(tip.textContent).includes("请求简历")) continue;
+      if (!norm(tip.textContent).includes("索取简历")) continue;
       const primary = tip.querySelector(".btn-box .boss-btn-primary.boss-btn, .btn-box .boss-btn-primary");
       if (!(primary instanceof HTMLElement)) continue;
       if (!norm(primary.textContent).includes("确定")) continue;
