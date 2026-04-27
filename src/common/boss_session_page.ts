@@ -16,6 +16,7 @@ import {
 } from '../browser/browser_session.js';
 import { CONTEXT_DESTROY_RETRY_MS } from '../browser/human_delay.js';
 import { sleepRandom } from '../browser/timing.js';
+import { installBossPageGuards } from './boss_page_guards.js';
 
 const SHOULD_DISABLE_JS =
   process.env.BOSS_BROWSER_DISABLE_JS === 'true' || process.env.BOSS_BROWSER_DISABLE_JS === '1';
@@ -129,11 +130,8 @@ async function ensureMenuListStableAfterLoad(page: Page): Promise<void> {
   while (Date.now() < deadline) {
     await sleepRandom(pollMs, pollMs);
     const snap = await readMenuListSnapshot(page);
-    if (!snap.exists) {
-      throw new Error('页面中的 .menu-list 在 3 秒稳定检测内消失，疑似未登录或页面仍在跳转。');
-    }
-    if (snap.signature !== expected) {
-      throw new Error('页面中的 .menu-list 在 3 秒稳定检测内发生变化，疑似页面仍在重定向或刷新。');
+    if (!snap.exists || snap.signature !== expected) {
+      throw new Error('登录状态校验失败，页面可能还未登录，请登录后再试');
     }
   }
 }
@@ -168,6 +166,9 @@ export async function withBossSessionPage<T>(callback: (page: Page) => Promise<T
       }
       setSessionPage(page);
       await page.bringToFront();
+
+      await installBossPageGuards(page);
+
       await ensureBossChatIndexUrlBeforeMenuList(page);
       if (SHOULD_DISABLE_JS) {
         await page.setJavaScriptEnabled(false);

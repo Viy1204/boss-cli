@@ -1,6 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
 import type { Browser, Page } from 'puppeteer-core';
 import { clearSpawnedChromeProcessRef, connectBrowser } from './cdp_browser.js';
+import { installBossBrowserPageGuards, installBossPageGuards } from '../common/boss_page_guards.js';
 let browserRef: Browser | null = null;
 let pageRef: Page | null = null;
 let connectPromise: Promise<void> | null = null;
@@ -112,7 +113,9 @@ async function establishSession(): Promise<void> {
   const b = await connectBrowser();
   browserRef = b;
   attachDisconnectedHandler(b);
+  await installBossBrowserPageGuards(b);
   pageRef = await pickOrCreatePage(b);
+  await installBossPageGuards(pageRef);
   await closeRedundantBlankPages(b, pageRef);
 }
 
@@ -127,6 +130,7 @@ export async function ensureAndGetBrowser(): Promise<Browser | null> {
 
 export async function ensureBrowserSession(): Promise<void> {
   if (browserRef?.connected) {
+    await installBossBrowserPageGuards(browserRef);
     if (pageRef && !pageRef.isClosed()) {
       try {
         const u = pageRef.url();
@@ -140,9 +144,11 @@ export async function ensureBrowserSession(): Promise<void> {
       } catch {
         /* ignore */
       }
+      await installBossPageGuards(pageRef);
       return;
     }
     pageRef = await pickOrCreatePage(browserRef);
+    await installBossPageGuards(pageRef);
     await closeRedundantBlankPages(browserRef, pageRef);
     return;
   }

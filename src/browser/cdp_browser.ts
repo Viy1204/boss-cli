@@ -1,6 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
 import readline from 'node:readline';
 import path from 'node:path';
 import puppeteer, { type Browser, type CDPSession, type Page } from 'puppeteer-core';
@@ -10,6 +9,20 @@ import { BROWSER_USER_DATA_DIR, ensureAppDataLayout } from '../config.js';
 const CDP_WEBSOCKET_ENDPOINT_REGEX = /^DevTools listening on (ws:\/\/.*)$/;
 
 const LAUNCH_READY_MS = 30_000;
+
+/**
+ * 固定的远程调试端口：boss-cli 使用独立的 user-data-dir，因此可以稳定占用一个端口，
+ * 让多个命令直接通过 `http://127.0.0.1:<port>/json/version` 复用同一只浏览器。
+ * 可用 `BOSS_BROWSER_REMOTE_DEBUGGING_PORT` 覆盖。
+ */
+export const REMOTE_DEBUGGING_PORT: number = (() => {
+  const raw = process.env.BOSS_BROWSER_REMOTE_DEBUGGING_PORT?.trim();
+  if (raw) {
+    const n = Number.parseInt(raw, 10);
+    if (Number.isFinite(n) && n > 0 && n <= 65535) return n;
+  }
+  return 53470;
+})();
 
 let spawnedChromeChild: ChildProcess | null = null;
 /** 最近一次 `connectBrowser` 是否以无头方式启动（`browser.process()` 在 connect 模式下不可用，供 login 等逻辑判断）。 */
@@ -25,41 +38,29 @@ export function wasLastChromeLaunchHeadless(): boolean {
 }
 
 /**
- * Chromium 在启用远程调试时会在用户数据目录写入 `DevToolsActivePort`（首行端口、次行 path）。
- * 当同一 user-data-dir 已有实例在跑时，新起的进程会通过单例立刻退出（常为代码 0），
- * 且本进程的 stdout 可能拿不到 `DevTools listening on`（尤其 Windows），此时应读本文件接到已有实例。
+ * 探测固定调试端口上是否已有在跑的 Chrome：直接命中 `/json/version` 拿当前
+ * `webSocketDebuggerUrl`，避免依赖 `DevToolsActivePort` 这种二级状态文件
+ * （可能被陈旧/清理/路径 UUID 漂移影响）。命中即可复用，未命中表示需要 spawn。
  */
-async function readDevToolsEndpointFromUserDataDir(
-  userDataDir: string,
-  maxWaitMs: number,
+async function probeRemoteDebuggingWsEndpoint(
+  port: number,
+  timeoutMs: number,
 ): Promise<string | undefined> {
-  const portPath = path.join(userDataDir, 'DevToolsActivePort');
-  const deadline = Date.now() + maxWaitMs;
-  let delay = 40;
-  while (Date.now() < deadline) {
-    if (existsSync(portPath)) {
-      try {
-        const fileContent = await readFile(portPath, 'ascii');
-        const lines = fileContent
-          .split('\n')
-          .map((l) => l.trim())
-          .filter((l) => l.length > 0);
-        const rawPort = lines[0];
-        const rawPath = lines[1];
-        if (rawPort && rawPath) {
-          const port = Number.parseInt(rawPort, 10);
-          if (Number.isFinite(port) && port > 0 && port <= 65535) {
-            return `ws://127.0.0.1:${port}${rawPath}`;
-          }
-        }
-      } catch {
-        /* 文件可能尚未写完，重试 */
-      }
-    }
-    await new Promise((r) => setTimeout(r, delay));
-    delay = Math.min(delay + 40, 200);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/json/version`, {
+      signal: ctrl.signal,
+    });
+    if (!res.ok) return undefined;
+    const data = (await res.json()) as { webSocketDebuggerUrl?: string };
+    const ws = data.webSocketDebuggerUrl;
+    return typeof ws === 'string' && ws.length > 0 ? ws : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timer);
   }
-  return undefined;
 }
 
 function waitForDevToolsWebSocketUrl(
@@ -108,30 +109,15 @@ function waitForDevToolsWebSocketUrl(
     }, timeoutMs);
 
     const onExit = (code: number | null) => {
-      if (timer !== undefined) {
-        clearTimeout(timer);
-        timer = undefined;
-      }
-      void (async () => {
-        if (code === 0) {
-          const fromFile = await readDevToolsEndpointFromUserDataDir(userDataDir, 4000);
-          if (fromFile) {
-            finish(() => {
-              resolve(fromFile);
-            });
-            return;
-          }
-        }
-        finish(() => {
-          reject(
-            new Error(
-              code === 0
-                ? '无法连接浏览器：新进程已退出（代码 0）且未在本地用户数据目录发现 DevTools 调试端口。若该配置正被「手动打开」的 Chrome 占用（无远程调试），请先关闭该窗口；或结束仍由上次 boss-cli 留下的浏览器后再试。'
-                : `浏览器进程在就绪前退出（代码 ${code ?? 'unknown'}）`,
-            ),
-          );
-        });
-      })();
+      finish(() => {
+        reject(
+          new Error(
+            code === 0
+              ? `浏览器进程立即以代码 0 退出：user-data-dir「${userDataDir}」可能正被另一只「无远程调试端口」的 Chrome 持有（Chrome 单例锁会让我们 spawn 的新进程把命令行交还给它后立刻退出）。请关闭占用该目录的 Chrome 窗口后重试。`
+              : `浏览器进程在就绪前退出（代码 ${code ?? 'unknown'}）`,
+          ),
+        );
+      });
     };
 
     const onProcError = (err: Error) => {
@@ -203,7 +189,6 @@ function findLocalChromiumExecutable(): string | undefined {
 
 /** 减轻「正受到自动测试软件的控制」提示与常见自动化特征（非万能，站点仍可能用其它方式检测）。手动开 Chrome 并接 CDP 时可复用。 */
 export const LAUNCH_ARGS_LESS_AUTOMATION = [
-  '--disable-blink-features=AutomationControlled',
   '--disable-infobars',
 ] as const;
 
@@ -233,6 +218,7 @@ export type ConnectBrowserOptions = {
  * - `CHROME_PATH` / `PUPPETEER_EXECUTABLE_PATH` — 启动本机浏览器可执行文件路径（高于自动探测）
  * - `BOSS_BROWSER_USER_DATA_DIR` — 启动浏览器时复用的用户数据目录；未设置时默认 `~/.boss-cli/.cache/browser-data`
  * - `BOSS_BROWSER_PROFILE_DIRECTORY` — 启动浏览器时指定 profile（如 `Default`）
+ * - `BOSS_BROWSER_REMOTE_DEBUGGING_PORT` — 远程调试端口（默认 53470）；同一 user-data-dir 跨命令复用该端口
  * - `BOSS_BROWSER_ALLOW_ALL_CORS` — 设为 `true` 时附加放宽同源/CORS 的启动参数（仅调试）
  * - `BOSS_BROWSER_DISABLE_GPU` — 设为 `true` 时附加 `--disable-gpu`
  *
@@ -291,24 +277,25 @@ export async function connectBrowser(options: ConnectBrowserOptions = {}): Promi
   lastChromeLaunchHeadless = !!headless;
 
   /**
-   * 优先直连已存在实例：若当前 user-data-dir 下已有开启远程调试的浏览器，
-   * 直接 connect，避免每次都 spawn 新进程导致额外空白窗口/闪窗。
+   * 优先直连固定调试端口上的已有实例：boss-cli 使用独立 user-data-dir，
+   * 端口稳定可期，命中即跨命令复用同一只浏览器（同一登录态、同一标签）。
    */
-  const existingWsUrl = await readDevToolsEndpointFromUserDataDir(userDataDir, 700);
+  const existingWsUrl = await probeRemoteDebuggingWsEndpoint(REMOTE_DEBUGGING_PORT, 800);
   if (existingWsUrl) {
-    try {
-      return await puppeteer.connect({
-        browserWSEndpoint: existingWsUrl,
-        defaultViewport: launchViewportFromEnv(),
-      });
-    } catch {
-      // 端口文件可能陈旧或实例刚退出，回退到 spawn + connect。
-    }
+    return await puppeteer.connect({
+      browserWSEndpoint: existingWsUrl,
+      defaultViewport: launchViewportFromEnv(),
+    });
   }
 
+  // 默认保留 WebAssembly：`typeof WebAssembly === 'undefined'` 本身就是强自动化指纹。
+  // aegis_bg.wasm 已在 CDP `Fetch.enable` 层被阻断，不需要再禁用 WASM 引擎。
+  // 仅当显式设置 BOSS_BROWSER_DISABLE_WASM=true/1 时才追加 --noexpose_wasm。
+  const disableWasm = process.env.BOSS_BROWSER_DISABLE_WASM === 'true' || process.env.BOSS_BROWSER_DISABLE_WASM === '1';
   const userArgs = [
     ...LAUNCH_ARGS_LESS_AUTOMATION,
     ...(disableGpu ? ['--disable-gpu'] : []),
+    ...(disableWasm ? ['--js-flags=--noexpose_wasm'] : []),
     ...(allowAllCors ? LAUNCH_ARGS_ALLOW_ALL_CORS : []),
     ...(profileDirectory ? [`--profile-directory=${profileDirectory}`] : []),
   ];
@@ -323,7 +310,7 @@ export async function connectBrowser(options: ConnectBrowserOptions = {}): Promi
     .filter((a) => a !== '--enable-automation' && a !== 'about:blank' && a !== 'data:,');
 
   if (!chromeArgs.some((a) => a.startsWith('--remote-debugging-'))) {
-    chromeArgs.push('--remote-debugging-port=0');
+    chromeArgs.push(`--remote-debugging-port=${REMOTE_DEBUGGING_PORT}`);
   }
 
   /**
