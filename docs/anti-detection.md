@@ -435,8 +435,6 @@ puppeteer 内部会把脚本同步注册到主 frame CDP session，并在 OOPIF/
 | `location.href = ...` 直接赋值 | `Location.prototype.href` setter 包装，规则同上（覆盖直接赋值场景） |
 | `history.back()` / `history.forward()` | 替换为带原生 toString 的 noop |
 | `history.go(-N)` | `go(n)` 包装，仅当 `n < 0` 时短路返回；`go(0)`/`go(N>=0)` 走原生 |
-| `beforeunload` 事件 | `addEventListener` 监听并 `preventDefault` |
-| `unload` 事件 | 捕获阶段 `preventDefault` |
 | `console.clear()` 周期清屏 | 替换为带原生形态的 noop（详见 §一.2） |
 | `console.log/info/debug/warn/error/table/dir/dirxml/trace/group/groupCollapsed` 时间差与副作用探测 | 包装：先把对象参数归一化为 `[object Type]` 字符串再交给原生方法（详见 §一.3 / §一.4） |
 
@@ -571,7 +569,6 @@ recommend / chat 等命令的输出，对 agent / 脚本调用方零侵入）。
 - `window.close()`
 - `history.back()` / `history.forward()` / `history.go(n < 0)`
 - `Location.assign/replace` 指向 `about:blank`、403、nonsupport、verify、Passport 风控页面
-- `beforeunload` / `unload`
 - 主框架如果仍被带到风险 URL，会触发 `framenavigated` 守卫重新回到沟通页
 
 这能挡住主包检测命中后的部分破坏动作；`location.href = ...` 直接赋值则主要依靠 CDP 风险导航请求

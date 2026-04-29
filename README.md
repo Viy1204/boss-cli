@@ -15,27 +15,31 @@
 
 ## 安装与本地运行
 
-### 全局安装（推荐）
+### 全局安装（推荐，免 sudo）
+
+> macOS / Linux 用户：系统 Node 默认把 npm 全局前缀放在 `/usr/local`（Apple Silicon 是 `/opt/homebrew`），当前账户没有写权限，**任何** `npm install -g` 都会报 EACCES。先把全局前缀挪到用户目录（**一次性配置，所有全局包通用**）：
+>
+> ```bash
+> mkdir -p ~/.npm-global
+> npm config set prefix ~/.npm-global
+>
+> # zsh 用 ~/.zshrc，bash 用 ~/.bash_profile
+> echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.zshrc
+> source ~/.zshrc
+> ```
+>
+> 已经在用 `fnm` / `nvm` / `volta` 接管 Node 的可跳过此步——它们默认就把全局前缀放在 `~` 下。
+>
+> Windows 用户无需此步，npm 全局前缀本来就在用户目录。
 
 ```bash
 npm install -g @joohw/boss-cli@latest
-```
-
-### 权限不足时
-
-若全局安装报权限错误（例如无法写入 npm 全局目录），可：
-
-```bash
-sudo npm install -g @joohw/boss-cli@latest
-```
-
-业务数据仍会落在用户目录下的 `~/.boss-cli/`（含 JD、简历截图等缓存），与是否使用 `sudo` 安装无冲突。
-
-安装后查看使用说明：
-
-```bash
 boss help
 ```
+
+业务数据落在 `~/.boss-cli/` 用户目录下，由 CLI 进程自己创建。
+
+> 不推荐用 `sudo npm install -g`：能装上，但全局 `node_modules` 会变成 root 所有，后续升级 / 卸载都得继续带 `sudo`，且任何带 postinstall 的包都会以 root 身份动你的 home。
 
 ### 从源码
 

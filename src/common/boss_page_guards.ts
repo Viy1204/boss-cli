@@ -304,17 +304,6 @@ const BOSS_PAGE_GUARD_SCRIPT_TEMPLATE = `(function() {
     }
   } catch (e) {}
 
-  // ===== beforeunload / unload：阻止破坏性卸载 =====
-  try {
-    var stopUnload = function(e) {
-      if (!e) return;
-      try { e.preventDefault(); } catch (_) {}
-      try { e.returnValue = ''; } catch (_) {}
-    };
-    window.addEventListener('beforeunload', stopUnload);
-    window.addEventListener('unload', stopUnload, true);
-  } catch (e) {}
-
   // ===== console.clear：可选替身，原生形态空函数 =====
   if (!__SHOULD_ALLOW_CONSOLE_CLEAR__) {
     try {
