@@ -134,7 +134,7 @@ function printHelp(): void {
   boss version | ver（或 -v / --version）
       显示当前版本并检查 npm 是否有更新
   boss login
-      打开登录页（需要在浏览器中自行完成登录）
+      打开登录页（需要用户在浏览器中自行完成登录，这个命令会直接返回）
   boss list [--unread]
       读取「全部」聊天列表候选人；--unread 仅显示未读（角标>0）
   boss chat <姓名> [--strict]

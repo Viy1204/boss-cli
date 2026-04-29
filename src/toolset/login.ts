@@ -86,8 +86,9 @@ export async function runLogin(): Promise<string> {
 
   // 不做任何登录校验：只把浏览器打开到登录页；立即断开 CDP，CLI 不与浏览器进程长期绑定。
   return [
-    `已在浏览器中打开Boss登录页 ${BOSS_LOGIN_URL}`,
-    '人工在浏览器中自行完成账号登录（扫码/验证码/人机验证等），即可执行后续指令',
+    `已在浏览器中打开 Boss 登录页：${BOSS_LOGIN_URL}`,
+    '本命令已同步结束并立即返回，CLI 不会等待 / 轮询 / 校验登录结果。',
+    'Agent调用方：把控制权交还给人类，不要在这一步自行 sleep / poll / retry',
   ].join('\n');
 }
 
