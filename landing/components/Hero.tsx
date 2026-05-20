@@ -10,7 +10,7 @@ export default function Hero() {
         </div>
 
         <h1 className="text-5xl sm:text-6xl font-bold text-white leading-tight tracking-tight mb-6">
-          Boss直聘招聘
+          Boss直聘
           <br />
           <span className="text-teal-500">自动化工具</span>
         </h1>
