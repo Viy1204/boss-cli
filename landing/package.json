@@ -1,0 +1,44 @@
+{
+  "name": "boss-cli-landing",
+  "version": "1.0.0",
+  "description": "boss-cli official landing page - Modern Next.js marketing website",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint . --ext ts,tsx",
+    "type-check": "tsc --noEmit",
+    "deploy": "node scripts/deploy.mjs"
+  },
+  "keywords": [
+    "boss-cli",
+    "Boss直聘",
+    "landing page",
+    "marketing",
+    "next.js"
+  ],
+  "author": "Joo",
+  "license": "GPL-3.0",
+  "dependencies": {
+    "next": "16.2.6",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "dotenv": "^17.4.2",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.6",
+    "ssh2": "^1.17.0",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}
