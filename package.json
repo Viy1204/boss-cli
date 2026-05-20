@@ -1,7 +1,37 @@
 {
   "name": "@joohw/boss-cli",
   "version": "0.3.5",
-  "description": "Boss 直聘 CLI，基于CDP协议，让Agent代替你的HR",
+  "description": "Boss直聘自动化 CLI：批量发消息、自动打招呼、候选人管理、深度搜索。基于 Puppeteer/CDP 驱动本机 Chrome，支持 AI Agent 编排",
+  "keywords": [
+    "boss",
+    "boss-cli",
+    "boss直聘",
+    "boss-zhipin",
+    "zhipin",
+    "bosszp",
+    "招聘自动化",
+    "hr-automation",
+    "recruitment-automation",
+    "puppeteer",
+    "cdp",
+    "chrome-devtools-protocol",
+    "cli",
+    "agent",
+    "ai-agent",
+    "自动打招呼",
+    "批量发消息",
+    "候选人管理",
+    "hr-tools",
+    "boss-direct"
+  ],
+  "homepage": "https://github.com/joohw/boss-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/joohw/boss-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/joohw/boss-cli/issues"
+  },
   "type": "module",
   "main": "dist/cli/index.js",
   "types": "dist/cli/index.d.ts",
