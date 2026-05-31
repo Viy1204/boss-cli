@@ -12,7 +12,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 concurrency:
@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -42,9 +42,9 @@ jobs:
 
       - name: Setup Node
         if: ${{ steps.npm_gate.outputs.publish == 'true' }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
 
@@ -125,3 +125,32 @@ jobs:
           done
           echo "Timed out waiting for @joohw/boss-cli@${target} to appear in npm view" >&2
           exit 1
+
+  release:
+    needs: publish
+    if: ${{ startsWith(github.ref, 'refs/tags/v') && needs.publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG_NAME" \
+              --notes-file <(gh api \
+                -X POST \
+                -H "Accept: application/vnd.github+json" \
+                "/repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+                -f tag_name="$TAG_NAME" \
+                --jq .body)
+          else
+            gh release create "$TAG_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG_NAME" \
+              --generate-notes \
+              --verify-tag
+          fi
