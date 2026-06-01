@@ -301,19 +301,12 @@ export async function clickGreet(
       if (cards.length === 0) {
         return { kind: "empty" };
       }
-
-      const idxNum = Number.parseInt(raw, 10);
-      let targetCard = null;
-      if (Number.isFinite(idxNum) && idxNum >= 1 && idxNum <= cards.length) {
-        targetCard = cards[idxNum - 1];
-      } else {
-        targetCard = cards.find((item) => {
-          const name =
-            norm(item.querySelector(".name-wrap .name")?.textContent) ||
-            norm(item.querySelector(".name")?.textContent);
-          return name === raw || name.includes(raw);
-        }) ?? null;
-      }
+      const targetCard = cards.find((item) => {
+        const name =
+          norm(item.querySelector(".name-wrap .name")?.textContent) ||
+          norm(item.querySelector(".name")?.textContent);
+        return name === raw || name.includes(raw);
+      }) ?? null;
       if (!targetCard) {
         return { kind: "not_found", target: raw };
       }
@@ -379,7 +372,7 @@ export function markGreetProduced(
 }
 
 /**
- * 在推荐 iframe 内根据姓名或序号打开在线简历预览：点击候选人卡片主体 `.card-inner`（与侧栏「打招呼」分离）。
+ * 在推荐 iframe 内根据姓名打开在线简历预览：点击候选人卡片主体 `.card-inner`（与侧栏「打招呼」分离）。
  * 父页随后出现 `c-resume` iframe（如 `source=recommend`）。旧版仅有「在线简历」链接时仍尝试点击链接。
  */
 export async function openRecommendResumePreview(frame: Frame, target: string): Promise<boolean> {
@@ -391,18 +384,12 @@ export async function openRecommendResumePreview(frame: Frame, target: string): 
     const cardSel = ${JSON.stringify(RECOMMEND_CARD_ROOT_SELECTOR)};
     const cards = Array.from(document.querySelectorAll(cardSel));
     if (cards.length === 0) return false;
-    const idxNum = Number.parseInt(raw, 10);
-    let targetCard = null;
-    if (Number.isFinite(idxNum) && idxNum >= 1 && idxNum <= cards.length) {
-      targetCard = cards[idxNum - 1];
-    } else {
-      targetCard = cards.find((item) => {
-        const name =
-          norm(item.querySelector(".name-wrap .name")?.textContent) ||
-          norm(item.querySelector(".name")?.textContent);
-        return name === raw || name.includes(raw);
-      }) ?? null;
-    }
+    const targetCard = cards.find((item) => {
+      const name =
+        norm(item.querySelector(".name-wrap .name")?.textContent) ||
+        norm(item.querySelector(".name")?.textContent);
+      return name === raw || name.includes(raw);
+    }) ?? null;
     if (!targetCard) return false;
 
     function tryOpen(el) {

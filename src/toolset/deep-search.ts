@@ -896,7 +896,7 @@ export async function readAiFormSelectedJobLabel(page: Page): Promise<string> {
 }
 
 /**
- * 在深度搜索（aiform）主文档中按姓名或序号打开在线简历预览（与 {@link clickGreetDeepSearch} 同一卡片集合，排除「继续沟通」）。
+ * 在深度搜索（aiform）主文档中按姓名打开在线简历预览（与 {@link clickGreetDeepSearch} 同一卡片集合，排除「继续沟通」）。
  */
 export async function openDeepSearchResumePreview(page: Page, target: string): Promise<boolean> {
   const raw = target.trim();
@@ -913,18 +913,11 @@ export async function openDeepSearchResumePreview(page: Page, target: string): P
       return !chatLabel.includes("继续沟通");
     });
     if (cards.length === 0) return false;
-
-    const idxNum = Number.parseInt(raw, 10);
-    var targetCard = null;
-    if (Number.isFinite(idxNum) && idxNum >= 1 && idxNum <= cards.length) {
-      targetCard = cards[idxNum - 1];
-    } else {
-      targetCard =
-        cards.find((item) => {
-          const name = norm(item.querySelector(".geek-name")?.textContent);
-          return name === raw || name.includes(raw);
-        }) ?? null;
-    }
+    const targetCard =
+      cards.find((item) => {
+        const name = norm(item.querySelector(".geek-name")?.textContent);
+        return name === raw || name.includes(raw);
+      }) ?? null;
     if (!targetCard) return false;
 
     function tryOpen(el) {
@@ -1037,18 +1030,11 @@ export async function clickGreetDeepSearch(page: Page, target: string): Promise<
       if (cards.length === 0) {
         return { kind: "all_continue" };
       }
-
-      const idxNum = Number.parseInt(raw, 10);
-      let targetCard = null;
-      if (Number.isFinite(idxNum) && idxNum >= 1 && idxNum <= cards.length) {
-        targetCard = cards[idxNum - 1];
-      } else {
-        targetCard =
-          cards.find((item) => {
-            const name = norm(item.querySelector(".geek-name")?.textContent);
-            return name === raw || name.includes(raw);
-          }) ?? null;
-      }
+      const targetCard =
+        cards.find((item) => {
+          const name = norm(item.querySelector(".geek-name")?.textContent);
+          return name === raw || name.includes(raw);
+        }) ?? null;
       if (!targetCard) {
         return { kind: "not_found", target: raw };
       }
@@ -1090,7 +1076,7 @@ export async function clickGreetDeepSearch(page: Page, target: string): Promise<
       throw new Error('当前列表均为「继续沟通」状态，已无待打招呼人选（与 boss deep-search 列表展示一致）。');
     case 'not_found':
       throw new Error(
-        `未在可打招呼的深度搜索列表中找到目标：${result.target}（「继续沟通」人选已排除，请用 boss deep-search 核对序号与姓名）。`,
+        `未在可打招呼的深度搜索列表中找到目标：${result.target}（「继续沟通」人选已排除，请用 boss deep-search 核对姓名）。`,
       );
     case 'no_btn':
       throw new Error(`候选人 ${result.name} 缺少「打招呼」按钮，无法执行。`);

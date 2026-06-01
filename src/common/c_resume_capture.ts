@@ -23,7 +23,7 @@ const CLOSE_C_RESUME_PANEL_SCRIPT = `(() => {
   var node = iframe ? iframe.parentElement : null;
   for (var i = 0; i < 12 && node; i++) {
     var closeBtn = node.querySelector(
-      '.boss-popup__close, .drawer-close, .icon-close, .btn-quxiao',
+      '.boss-popup__close, .drawer-close, .icon-close, .close-btn, .btn-quxiao',
     );
     if (closeBtn) {
       closeBtn.click();

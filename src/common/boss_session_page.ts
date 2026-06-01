@@ -17,6 +17,7 @@ import {
 import { CONTEXT_DESTROY_RETRY_MS } from '../browser/human_delay.js';
 import { sleepRandom } from '../browser/timing.js';
 import { installBossPageGuards } from './boss_page_guards.js';
+import { withBossSessionLock } from './boss_session_lock.js';
 
 const SHOULD_DISABLE_JS =
   process.env.BOSS_BROWSER_DISABLE_JS === 'true' || process.env.BOSS_BROWSER_DISABLE_JS === '1';
@@ -147,7 +148,8 @@ async function ensureMenuListStableAfterLoad(page: Page): Promise<void> {
  * 再校验侧栏；回调内可再导航到职位/推荐等业务路由。
  */
 export async function withBossSessionPage<T>(callback: (page: Page) => Promise<T>): Promise<T> {
-  const isContextDestroyed = (e: unknown): boolean => {
+  return withBossSessionLock(async () => {
+    const isContextDestroyed = (e: unknown): boolean => {
     const msg = e instanceof Error ? e.message : String(e);
     return (
       msg.includes('Execution context was destroyed') ||
@@ -156,9 +158,9 @@ export async function withBossSessionPage<T>(callback: (page: Page) => Promise<T
     );
   };
 
-  const maxAttempts = 2;
-  let lastErr: unknown;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const maxAttempts = 2;
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       await ensureBrowserSession();
       const browser = getBrowserRef();
@@ -203,5 +205,6 @@ export async function withBossSessionPage<T>(callback: (page: Page) => Promise<T
       throw e;
     }
   }
-  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  });
 }

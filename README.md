@@ -24,7 +24,7 @@ boss help
 | 场景 | 命令 |
 | --- | --- |
 | Boss直聘批量发消息 | `boss send --text "..."` 配合脚本循环 |
-| Boss直聘自动打招呼 | `boss greet <序号> [--job <岗位>]` |
+| Boss直聘自动打招呼 | `boss greet <姓名> [--job <岗位>]` |
 | Boss直聘候选人筛选 | `boss list` / `boss list --unread` |
 | Boss直聘脚本自动化 | 本机 Chrome + CDP，Cookie 本地存储 |
 | AI 招聘 Agent | 子进程调用，输出 Agent 友好 |
@@ -72,11 +72,11 @@ npm install && npm run build
 | `boss send [--text <内容>]` | 向当前会话发送消息 |
 | `boss action <操作>` | 索要简历 / 不合适 / 备注 / 交换微信等 |
 | `boss recommend [岗位关键字]` | 读取推荐候选人列表 |
-| `boss greet <姓名\|序号> [--job <岗位>]` | 对推荐候选人打招呼（有次数限制） |
-| `boss preview <姓名\|序号> [--job <岗位>]` | 在线简历预览（每日次数有限） |
+| `boss greet <姓名> [--job <岗位>]` | 对推荐候选人打招呼（有次数限制） |
+| `boss preview <姓名> [--job <岗位>]` | 在线简历预览（每日次数有限） |
 | `boss deep-search [岗位关键字]` | 深度搜索列表 / 触发立即匹配 |
 | `boss positions` | 读取职位列表 |
-| `boss jd <名称或序号>` | 抓取职位 JD 缓存到本地 |
+| `boss jd <名称>` | 抓取职位 JD 缓存到本地 |
 
 完整用法：`boss help`
 
@@ -97,7 +97,7 @@ boss send --text "您好，请问方便发一下简历吗？"
 
 # 4. 推荐页自动打招呼
 boss recommend 前端工程师
-boss greet 1 --job 前端工程师
+boss greet 张三 --job 前端工程师
 ```
 
 ---
@@ -112,7 +112,7 @@ boss-cli 每条命令输出纯文本，适合 LLM 通过子进程编排：
 3. boss action resume     → 索要简历
 4. boss send -t "..."     → 发送消息
 5. boss recommend         → 读取推荐列表
-6. boss greet <序号>      → 批量打招呼
+6. boss greet <姓名>      → 批量打招呼
 ```
 
 详见 [AGENTS.md](./AGENTS.md)。

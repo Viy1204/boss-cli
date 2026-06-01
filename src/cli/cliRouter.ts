@@ -150,14 +150,14 @@ function printHelp(): void {
       --request-resume：发送后延迟片刻自动执行「求简历」操作
   boss positions
       读取当前职位列表（含开放/待开放/已关闭状态）
-  boss jd <name|序号>
+  boss jd <name>
       抓取指定职位详情并缓存到项目目录同名 .md
   boss recommend [岗位关键字]
       进入推荐页并读取推荐列表；带岗位关键字时先在岗位下拉中模糊匹配并切换
-  boss preview <姓名|序号> [--job <岗位关键字>]
+  boss preview <姓名> [--job <岗位关键字>]
       在线简历预览：须当前已在「推荐」(/web/chat/recommend) 或「深度搜索」(/web/chat/aiform) 且列表已加载；不会自动跳转
       注意：平台对在线简历每日可查看次数有限，请按需使用、谨慎查看
-  boss greet <姓名|序号> [--job <岗位关键字>]
+  boss greet <姓名> [--job <岗位关键字>]
       在「推荐」页（或当前已在 Boss 聊天侧栏打开的、含候选人列表的页面）对列表中的候选人点击“打招呼”
       可选 --job 先在岗位下拉中模糊匹配并切换（与 recommend / preview 共用同一套选择逻辑）
       须先在对应页加载出候选人列表
@@ -350,7 +350,7 @@ export async function executeCommand(argv: string[]): Promise<string> {
   if (cmd === 'jd') {
     const { flags, opts, rest } = parseOpts(tail);
     if (flags.has('detail')) {
-      die('❌ jd 不再支持 --detail。请使用: jd <name|序号>');
+      die('❌ jd 不再支持 --detail。请使用: jd <name>');
     }
     if (flags.size > 0) {
       const unsupportedFlags = Array.from(flags).join(', --');
@@ -358,7 +358,7 @@ export async function executeCommand(argv: string[]): Promise<string> {
     }
     const detailName = rest.join(' ').trim();
     if (!detailName) {
-      die('❌ 用法: jd <name|序号>');
+      die('❌ 用法: jd <name>');
     }
     const unknownOpts = Object.keys(opts);
     if (unknownOpts.length > 0) {
@@ -387,7 +387,7 @@ export async function executeCommand(argv: string[]): Promise<string> {
     }
     const candidateTarget = rest.join(' ').trim();
     if (!candidateTarget) {
-      die('❌ 用法: preview <姓名|序号> [--job <岗位关键字>]');
+      die('❌ 用法: preview <姓名> [--job <岗位关键字>]');
     }
     const jobKeyword = opts.job?.trim();
     return implPreview({ candidateTarget, jobKeyword: jobKeyword || undefined });
@@ -396,7 +396,7 @@ export async function executeCommand(argv: string[]): Promise<string> {
   if (cmd === 'recommend') {
     const { rest, opts, flags } = parseOpts(tail);
     if (rest[0] === 'preview') {
-      die('❌ 请改用: boss preview <姓名|序号> [--job <岗位关键字>]（已不再使用 recommend preview）');
+      die('❌ 请改用: boss preview <姓名> [--job <岗位关键字>]（已不再使用 recommend preview）');
     }
     if (Object.keys(opts).length > 0 || flags.size > 0) {
       die('❌ 用法: recommend [岗位关键字]');
@@ -408,16 +408,16 @@ export async function executeCommand(argv: string[]): Promise<string> {
   if (cmd === 'greet') {
     const { rest, opts, flags } = parseOpts(tail);
     if (flags.size > 0) {
-      die('❌ 用法: greet <姓名|序号> [--job <岗位关键字>]');
+      die('❌ 用法: greet <姓名> [--job <岗位关键字>]');
     }
     const jobKeyword = opts.job?.trim();
     const extraOpts = Object.keys(opts).filter((k) => k !== 'job');
     if (extraOpts.length > 0) {
-      die('❌ 用法: greet <姓名|序号> [--job <岗位关键字>]');
+      die('❌ 用法: greet <姓名> [--job <岗位关键字>]');
     }
     const target = rest.join(' ').trim();
     if (!target) {
-      die('❌ 用法: greet <姓名|序号> [--job <岗位关键字>]');
+      die('❌ 用法: greet <姓名> [--job <岗位关键字>]');
     }
     return implRecommendGreet({ candidateTarget: target, jobKeyword: jobKeyword || undefined });
   }

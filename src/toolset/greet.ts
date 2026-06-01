@@ -64,7 +64,7 @@ export async function runRecommendGreet(options: GreetOptions): Promise<string> 
   const t = options.candidateTarget.trim();
   const kw = (options.jobKeyword ?? '').trim();
   if (!t) {
-    throw new Error('请提供打招呼目标（姓名或序号）。');
+    throw new Error('请提供打招呼目标（姓名）。');
   }
   try {
     return await withBossSessionPage(async (page) => {

@@ -45,7 +45,7 @@ export type PreviewOptions = {
 export async function runPreview(options: PreviewOptions): Promise<string> {
   const target = options.candidateTarget.trim();
   if (!target) {
-    throw new Error('请提供候选人姓名或列表序号。');
+    throw new Error('请提供候选人姓名。');
   }
   try {
     return await withBossSessionPage(async (page) => {
