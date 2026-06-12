@@ -1,5 +1,5 @@
 /**
- * Boss B 端「已登录主壳」会话：选页、必要时进入沟通页、侧栏 `.menu-list` 探测与稳定检测，
+ * Boss B 端「主壳」会话：选页、必要时进入沟通页、侧栏 `.menu-list` 探测，
  * 再执行 {@link withBossSessionPage} 回调。与 `src/toolset/chat.ts`（按姓名打开会话等业务）无关。
  */
 import type { Browser, Page } from 'puppeteer-core';
@@ -86,7 +86,7 @@ async function readMenuListSnapshot(page: Page): Promise<MenuListSnapshot> {
 
 /**
  * 先按 URL 判断：不在 Boss 已登录主壳页（`/web/chat/*`）时跳到沟通页 `/web/chat/index`，
- * 再交由 {@link ensureMenuListStableAfterLoad} 查 `.menu-list`。
+ * 再交由 {@link ensureMenuListMountedAfterLoad} 查 `.menu-list`。
  * 已经在 `/web/chat/recommend`、`/web/chat/aiform` 等主壳子页时直接跳过 goto，
  * 避免触发"先回到聊天页再切回业务页"的额外跳转。
  */
@@ -97,7 +97,7 @@ async function ensureBossChatShellUrlBeforeMenuList(page: Page): Promise<void> {
   await page.goto(BOSS_CHAT_INDEX_URL, { waitUntil: 'load', timeout: 60_000 });
 }
 
-async function ensureMenuListStableAfterLoad(page: Page): Promise<void> {
+async function ensureMenuListMountedAfterLoad(page: Page): Promise<void> {
   await page.waitForFunction(
     `(() => document.readyState === "complete" || document.readyState === "interactive")()`,
     { timeout: 12_000 },
@@ -127,23 +127,10 @@ async function ensureMenuListStableAfterLoad(page: Page): Promise<void> {
   if (!normalizeMenuText(first.signature)) {
     throw new Error('检测到 .menu-list 但菜单内容为空，当前页面状态异常。');
   }
-
-  const stableWindowMs = 3_000;
-  const pollMs = 300;
-  const deadline = Date.now() + stableWindowMs;
-  const expected = first.signature;
-
-  while (Date.now() < deadline) {
-    await sleepRandom(pollMs, pollMs);
-    const snap = await readMenuListSnapshot(page);
-    if (!snap.exists || snap.signature !== expected) {
-      throw new Error('登录状态校验失败，页面可能还未登录，请登录后再试');
-    }
-  }
 }
 
 /**
- * 在已连接浏览器、且当前页为 Boss 已登录主壳（含侧栏 `.menu-list` 稳定）的前提下执行回调。
+ * 在已连接浏览器、且当前页为 Boss 主壳（含侧栏 `.menu-list`）的前提下执行回调。
  * 会先按 URL 确保落在 `/web/chat/*` 主壳页（已在主壳子页则保留原路径，否则跳回沟通页 `/web/chat/index`），
  * 再校验侧栏；回调内可再导航到职位/推荐等业务路由。
  */
@@ -181,7 +168,7 @@ export async function withBossSessionPage<T>(callback: (page: Page) => Promise<T
       if (SHOULD_DISABLE_JS) {
         await page.setJavaScriptEnabled(false);
       }
-      await ensureMenuListStableAfterLoad(page);
+      await ensureMenuListMountedAfterLoad(page);
 
       if (!SHOULD_DISABLE_JS && !SKIP_AGENT_OPERATING_OVERLAY) {
         await showAgentOperatingIndicator(page).catch(() => {

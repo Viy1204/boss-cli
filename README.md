@@ -5,6 +5,8 @@
 [![license](https://img.shields.io/github/license/joohw/boss-cli)](./LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/joohw/boss-cli)](https://github.com/joohw/boss-cli)
 
+官网主页：[boss-cli.com](https://boss-cli.com)
+
 **boss-cli**（`@joohw/boss-cli`）是开源的 **Boss直聘自动化命令行工具**。基于 Puppeteer / CDP 协议驱动本机 Chrome，无需 Selenium，把 Boss直聘 B 端的核心 HR 操作搬进终端：**候选人列表**、**批量发消息**、**自动打招呼**、**在线简历预览**、**深度搜索**、**职位管理**。
 
 适合 HR 日常提效，也适合 Claude / GPT / Gemini 等 **AI Agent** 通过子进程调用，搭建全自动化招聘流水线。
@@ -41,6 +43,8 @@ npm install -g @joohw/boss-cli@latest
 boss help
 ```
 
+如果你觉得 boss-cli 好用，欢迎给本仓库一个 Star；使用中遇到问题请提交 Issue，新功能或改进也欢迎提交 PR。
+
 > **macOS / Linux 权限问题**：系统 Node 默认全局前缀在 `/usr/local`，当前账户无写权限。建议先把全局前缀挪到用户目录（一次性配置）：
 >
 > ```bash
@@ -51,14 +55,6 @@ boss help
 > ```
 >
 > 使用 `fnm` / `nvm` / `volta` 的用户可跳过此步。Windows 用户无需此步。
-
-### 从源码构建
-
-```bash
-git clone https://github.com/joohw/boss-cli.git
-cd boss-cli
-npm install && npm run build
-```
 
 ---
 
@@ -167,6 +163,7 @@ npm run dev     # build + 交互模式
 
 ## 相关链接
 
+- 官网：[boss-cli.com](https://boss-cli.com)
 - npm：[@joohw/boss-cli](https://www.npmjs.com/package/@joohw/boss-cli)
 - GitHub：[joohw/boss-cli](https://github.com/joohw/boss-cli)
 - 问题反馈：[Issues](https://github.com/joohw/boss-cli/issues)

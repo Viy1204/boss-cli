@@ -1,6 +1,6 @@
 {
   "name": "@joohw/boss-cli",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Boss直聘自动化 CLI：批量发消息、自动打招呼、候选人管理、深度搜索。基于 Puppeteer/CDP 驱动本机 Chrome，支持 AI Agent 编排",
   "keywords": [
     "boss",
@@ -24,7 +24,7 @@
     "hr-tools",
     "boss-direct"
   ],
-  "homepage": "https://github.com/joohw/boss-cli#readme",
+  "homepage": "https://boss-cli.com",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/joohw/boss-cli.git"
