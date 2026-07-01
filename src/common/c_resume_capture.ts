@@ -93,7 +93,7 @@ export async function findVisibleCResumeIframeHandle(page: Page): Promise<Elemen
 
 export async function waitForVisibleCResumeIframeReady(
   page: Page,
-  timeoutMs = 4_000,
+  timeoutMs = 6_000,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -141,7 +141,7 @@ export async function captureCResumeIframeToFile(
 ): Promise<boolean> {
   try {
     await setTempHeight(page, preOpenViewport);
-    await waitForVisibleCResumeIframeReady(page, 1_000);
+    await waitForVisibleCResumeIframeReady(page, 2_000);
 
     const iframe = await findVisibleCResumeIframeHandle(page);
     if (!iframe) {

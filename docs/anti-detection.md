@@ -95,18 +95,22 @@ if (b - a > THRESHOLD) {  // DevTools 打开
 **我方对抗**：§1.3 的对抗手段顺带消除了这条路径——对象在进入 inspector **之前**已经被替换成
 `[object Type]` 字符串，探测脚本预埋的 getter 再也不会被触发。
 
-### 1.5 隐藏 iframe 取干净 console（未覆盖兜底）
+### 1.5 隐藏 iframe 取干净 console（主路径已验证覆盖）
 
 **原理**：主包创建一个隐藏 iframe（同源），从 `iframe.contentWindow.console` 取一份「干净」的 console
 引用，在该引用上重复 §1.3 / §1.4 的探测，绕过页面里被我方包装过的 console。
 
 **当前覆盖情况**：puppeteer 的 `page.evaluateOnNewDocument` 内部会把脚本注册到主 frame CDP session，
 并在 OOPIF / iframe target 通过 `Target.attachedToTarget` attach 时再次 addScript（见
-`installBossBrowserPageGuards` 监听 `targetcreated`），**理论上 iframe 也会被注入守卫脚本**。
+`installBossBrowserPageGuards` 监听 `targetcreated`），iframe 也会被注入守卫脚本。
 
-**仍未完全覆盖的边角**：`iframe[srcdoc]`、极早期同步创建的 iframe、跨进程隔离的特殊 OOPIF 极端
-情况下仍可能漏。短期通过 §三.3 的网络拦截减少主包加载概率（主包在 CDP 拦截网络请求里没拦——它本身
-是业务代码，不能阻断；但反调试代码触发的上报路径已经被 logapi 拦截 204 掉），命中再具体分析。
+**2026-07-01 本地验证**：在守卫安装后创建动态 `iframe.srcdoc`，主 frame 与子 frame 的
+`navigator.webdriver` 都为 `false`；两侧 `console.log({})` 都被归一化为 `"[object Object]"`。
+这覆盖了线上 `zhipin-sign/v5303/static/js/vendors~app.9ac375ae.js` 模块 `VXjk` 通过
+`srcdoc="<script>parent.__xbcw = window</script>"` 取 clean window / clean console 的主路径。
+
+**仍需观察的边角**：如果页面 target 在守卫安装前已经执行过检测脚本，或出现特殊跨进程 OOPIF 时序，
+仍需按实际日志分析。当前不通过阻断主包解决该问题，因为主包本身是业务代码，不能阻断。
 
 ### 1.6 关键对象完整性校验（反篡改）
 
@@ -156,13 +160,13 @@ if (b - a > THRESHOLD) {  // DevTools 打开
 | `console.clear()` 周期性清屏 | §三.2 `console.clear` noop 替身 | ✅ 已实现 |
 | console 时间差探测 | §三.2 `console.log` 等参数归一化 | ✅ 已实现，实测有效 |
 | console 副作用探测 | §三.2 同上（连带消除） | ✅ 已实现 |
-| 隐藏 iframe 取干净 console | §三.2 `evaluateOnNewDocument` 走 puppeteer 注册到所有 frame target | ⚠️ 主路径覆盖，极端边角未保证 |
+| 隐藏 iframe 取干净 console | §三.2 `evaluateOnNewDocument` 走 puppeteer 注册到所有 frame target | ✅ `srcdoc` 主路径已验证 |
 | 关键对象完整性校验 | §三.2 改写都落 prototype，保留 toString 原生形态 | ✅ 已实现 |
 | 命中后破坏动作（关页/跳转） | §三.2 + §三.3 | ✅ 已实现 |
 | 命中后破坏动作（上报到 logapi） | §三.3 CDP 返回 204 | ✅ 已实现 |
 
 > **建议补强**：自动化命令执行时**避免手动打开页面 DevTools**——主包的 DevTools 检测只要面板打开
-> 就可能命中，虽然时间差路径已经拦下，但隐藏 iframe 兜底路径仍存在残余风险。需要观察日志时优先用
+> 就可能命中。需要观察日志时优先用
 > CDP `Runtime.consoleAPICalled`、`Log.entryAdded`、Network 事件或外部日志文件。
 
 ---
@@ -188,15 +192,19 @@ if (b - a > THRESHOLD) {  // DevTools 打开
 | 跳转触发 | 命中后调 `window.close` / `history.back` / `location.href` 重写 | §一.7 |
 | 上报通道 | `navigator.sendBeacon`、`fetch(..., keepalive: true)`、同步/异步 XHR → `https://logapi.zhipin.com/dap/api/json` | §一.7、§三.3 |
 
-**当前现状（2026-04-27 实测）**：
+**当前现状（2026-07-01 复查）**：
 
+- 线上聊天壳为 `zhipin-boss/index/v10493/static/js/app.js`，该入口继续动态加载
+  `zhipin-boss/bundle/v6189/static/remoteEntry.js` 与业务 chunks；反调试主逻辑仍位于
+  `zhipin-sign/v5303/static/js/vendors~app.9ac375ae.js` 的 `VXjk` 模块。
 - **console 时间差路径**已被 §三.2 打掉，DevTools 打开下不再触发关页/跳转。
 - **console 副作用路径**（探测对象上的 `RegExp.toString` / `Date.toString` / `Function.toString` /
   DOM getter）也被同一层包装连带消除——对象在进入 inspector 之前已经被替换成 `[object Type]` 字符串，
   探测脚本预埋的 getter 再也不会被触发。
+- **隐藏 `srcdoc` iframe 取 clean console** 的主路径已用本地 Puppeteer 验证覆盖：子 frame 中
+  `navigator.webdriver === false`，对象 console 输出同样被归一化。
 - **关闭/跳转破坏动作**已被 §三.2 与 §三.3 双层拦下。
 - **上报通道**已被 §三.3 网络拦截 204 掉，即使本地检测被打穿，外层也拿不到数据。
-- 仍未完全覆盖：隐藏 iframe 取干净 console 的二次探测路径（详见 §一.5）。
 
 ### 2. Passport 控制逻辑 — 主包 `handlePassportController`
 
@@ -226,7 +234,7 @@ if (b - a > THRESHOLD) {  // DevTools 打开
 
 | 文件 | 路径 |
 |------|------|
-| 风险检测 | `https://static.zhipin.com/zhipin-boss/index/v9715/static/js/risk-detection.js` |
+| 风险检测 | `https://static.zhipin.com/zhipin-boss/index/v10493/static/js/risk-detection.js` |
 
 **定位**：webpack 入口模块 `42302`，独立的"DOM 注入 + 全局污染 + 合成点击"完整性检测器。
 不依赖 console 副作用、不依赖 DevTools 开关，只看页面 DOM/window/click 形态有无被外部
@@ -266,6 +274,10 @@ if (b - a > THRESHOLD) {  // DevTools 打开
 **99003 的 known-list**：模块里硬编码了一个 ~330 项的"已知 window 属性"白名单，覆盖标准
 Web API + Boss 自家全局对象（`iBossRoot` / `zpAegis` / `Warlock` / `BossAnalytics` /
 `Vue` / `_AMapSecurityConfig` / `__bzcoco_*` 等），其余全报。
+
+2026-07-01 复查：`99000` 在压缩产物中仍写作 `99e3`；known-list 已包含
+`__SECURITY_WASM_BRIDGE__`、`fetchLater`、`oncommand`、`__xbcw` 等新键，但检测模型仍是
+`99000`-`99005` 六类，没有新增需要修改守卫策略的检测码。
 
 **生命周期 hook 点**：
 
@@ -639,17 +651,20 @@ BOSS_BROWSER_ALLOW_CONSOLE_CLEAR=true
 BOSS_BROWSER_ALLOW_VERBOSE_CONSOLE=true
 ```
 
-#### 实测结果（2026-04-27）
+#### 实测结果（2026-07-01）
 
 在 Boss 直聘主框架 + DevTools 打开的场景下实测确认：
 
 - `console.log` / `console.table` / `console.dir` 等方法**已被成功覆盖**，主包探测脚本
-  （`vendors~app.6a19cb61.js`）打印 `Array(50)` 大对象时，DevTools 中显示的是
+  （当前为 `zhipin-sign/v5303/static/js/vendors~app.9ac375ae.js` 的 `VXjk` 模块）打印
+  `Array(50)` 大对象时，DevTools 中显示的是
   `'[object Array]'` 字符串而非可展开的真数组；`()=>{}` 箭头函数显示为 `'[Function: anonymous]'`。
 - 50 次大对象打印的 `performance.now()` 差值塌缩到常数级，**不再随 DevTools 开关变化**，
   阈值检测不再命中，不再触发 `window.close()` / `history.back()` / `location.href` 重写
   这一连串破坏动作。
 - `console.clear` 的替身同步生效，DevTools 日志面板不再被周期性清空。
+- 动态 `iframe.srcdoc` 子 frame 中同样生效：`navigator.webdriver === false`，且
+  `console.log({})` 进入 CDP console 事件时已变成 `"[object Object]"`。
 
 > 历史教训：第一版实现只去 `Console.prototype` 上找方法，结果在 Chromium 上一个都没 patch
 > 上（Chromium 把这些方法挂在 `console` 实例的 own property 上）。修复后改成"先 instance
@@ -657,7 +672,7 @@ BOSS_BROWSER_ALLOW_VERBOSE_CONSOLE=true
 > 仅 prototype 路径。**
 
 风险：探测脚本可以改用别的方法（例如直接调 `performance.mark` 测自己包装过的代码段），
-或借隐藏 iframe 取一份干净 console 再打印；这类二次探测无法靠这层包装挡住（详见 §一.5）。命中再具体分析。
+或改变 iframe 创建/执行时序。命中再具体分析。
 
 ### 6. 建议补强：不要在自动化会话中手动打开 DevTools
 

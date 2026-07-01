@@ -71,7 +71,7 @@ async function waitForChatFilterAllSelected(page: Page): Promise<void> {
       const selectedByAncestor = !!allTab.closest(".active, .selected, .current, .checked");
       return selectedByClass || selectedByAria || selectedByAncestor;
     })()`,
-    { timeout: 6_000 },
+    { timeout: 8_000 },
   );
 }
 
@@ -99,13 +99,13 @@ export async function ensureChatIndexAllFilter(page: Page): Promise<void> {
       const hasItems = document.querySelectorAll(".geek-item").length > 0;
       return !!list || hasItems;
     })()`,
-    { timeout: 12_000 },
+    { timeout: 15_000 },
   );
 
   await clickChatFilterTabAll(page);
   await waitForChatFilterAllSelected(page);
   await waitForCandidateListSettled(page, {
-    timeoutMs: 14_000,
+    timeoutMs: 18_000,
     pollMsMin: LIST_POLL_MS.min,
     pollMsMax: LIST_POLL_MS.max,
     minMsBeforeEmptyOk: LIST_MIN_BEFORE_EMPTY_OK_MS,

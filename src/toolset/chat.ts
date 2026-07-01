@@ -38,7 +38,7 @@ async function waitForChatHistoryPanelReady(page: Page, selectedTab?: string): P
       }
       return !!root.querySelector(".record");
     })`,
-    { timeout: 8_000 },
+    { timeout: 10_000 },
     selectedTab ?? null,
   );
 }
@@ -207,7 +207,7 @@ async function closeChatHistoryPopup(page: Page): Promise<void> {
           return st.display === "none" || st.visibility === "hidden" || r.width <= 0 || r.height <= 0;
         });
       })()`,
-      { timeout: 2_000 },
+      { timeout: 3_000 },
     ).catch(() => {});
     const popupWrap = await page.$('.boss-popup__wrapper.chat-history, .boss-dialog__wrapper.chat-history');
     if (popupWrap) {
@@ -228,7 +228,7 @@ async function closeChatHistoryPopup(page: Page): Promise<void> {
             return st.display === "none" || st.visibility === "hidden" || r.width <= 0 || r.height <= 0;
           });
         })()`,
-        { timeout: 1_500 },
+        { timeout: 2_500 },
       ).catch(() => {});
     }
   } catch (err) {
@@ -372,7 +372,7 @@ export async function runOpenCandidateChat(
           const text = document.querySelector(".base-info-single-container .name-box")?.textContent ?? "";
           return text.replace(/\\s+/g, " ").trim().includes(name);
         })`,
-        { timeout: 12_000 },
+        { timeout: 15_000 },
         foundName || targetName,
       );
       await page.waitForFunction(
@@ -391,7 +391,7 @@ export async function runOpenCandidateChat(
           });
           return hasText;
         })()`,
-        { timeout: 16_000 },
+        { timeout: 20_000 },
       );
     } catch {
       selected = await targetWrap

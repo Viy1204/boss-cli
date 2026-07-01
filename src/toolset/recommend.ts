@@ -42,7 +42,7 @@ export function isBossChatRecommendUrl(url: string): boolean {
 }
 
 async function getRecommendFrame(page: Page): Promise<Frame> {
-  await page.waitForSelector('iframe[name="recommendFrame"]', { timeout: 15_000 });
+  await page.waitForSelector('iframe[name="recommendFrame"]', { timeout: 18_000 });
   const frameByName = page.frames().find((f) => f.name() === 'recommendFrame') ?? null;
   if (frameByName) {
     return frameByName;
@@ -69,7 +69,7 @@ async function ensureRecommendFrameReady(frame: Frame): Promise<void> {
       const root = document.querySelector(".card-list, .geek-list-wrap .geek-list");
       return !!root;
     })()`,
-    { timeout: 15_000 },
+    { timeout: 18_000 },
   );
 }
 
@@ -92,7 +92,7 @@ async function waitForRecommendJobDropdownReady(frame: Frame): Promise<void> {
       }
       return !!options.querySelector(".top-chat-search .chat-job-search");
     })()`,
-    { timeout: 6_000 },
+    { timeout: 8_000 },
   );
 }
 
@@ -108,7 +108,7 @@ async function waitForRecommendJobSearchResults(frame: Frame, keyword: string): 
         return label.includes(norm(kw));
       });
     })`,
-    { timeout: 8_000 },
+    { timeout: 10_000 },
     keyword,
   );
 }
@@ -120,7 +120,7 @@ async function waitForRecommendJobSelected(frame: Frame, expectedLabel: string):
       const current = norm(document.querySelector(".job-selecter-wrap .ui-dropmenu-label")?.textContent);
       return !!current && current === label;
     })`,
-    { timeout: 8_000 },
+    { timeout: 10_000 },
     expectedLabel,
   );
   await ensureRecommendFrameReady(frame);

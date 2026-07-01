@@ -46,7 +46,7 @@ async function waitForAiFormReady(page: Page): Promise<void> {
       const text = (selected.textContent ?? "").replace(/\\s+/g, " ").trim();
       return text.length > 0;
     })()`,
-    { timeout: 15_000 },
+    { timeout: 18_000 },
   );
 }
 
@@ -822,7 +822,7 @@ async function waitForAiFormJobDropdownReady(page: Page): Promise<void> {
       });
       return !!input;
     })()`,
-    { timeout: 6_000 },
+    { timeout: 8_000 },
   );
 }
 
@@ -841,7 +841,7 @@ async function waitForAiFormJobSearchResults(page: Page, keyword: string): Promi
         return label.includes(norm(kw));
       });
     })`,
-    { timeout: 8_000 },
+    { timeout: 10_000 },
     keyword,
   );
 }
@@ -853,7 +853,7 @@ async function waitForAiFormJobSelected(page: Page, expectedLabel: string): Prom
       const selected = norm(document.querySelector(".job-dropmenu-select .job-main-text")?.textContent);
       return !!selected && selected === label;
     })`,
-    { timeout: 8_000 },
+    { timeout: 10_000 },
     expectedLabel,
   );
   await ensureInDeepSearchPage(page);
