@@ -111,19 +111,34 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public
 
-      - name: Verify published version
+      - name: Update npm latest dist-tag
+        if: ${{ steps.npm_gate.outputs.publish == 'true' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          target="${{ steps.version.outputs.target }}"
+          npm dist-tag add "@joohw/boss-cli@${target}" latest --registry=https://registry.npmjs.org/
+
+      - name: Verify npm latest
         if: ${{ steps.npm_gate.outputs.publish == 'true' }}
         run: |
           set -euo pipefail
           target="${{ steps.version.outputs.target }}"
           for attempt in $(seq 1 10); do
-            if npm view "@joohw/boss-cli@${target}" version dist-tags --json --registry=https://registry.npmjs.org/; then
-              exit 0
+            if current="$(npm view "@joohw/boss-cli" version --registry=https://registry.npmjs.org/)" &&
+              tags="$(npm dist-tag ls "@joohw/boss-cli" --registry=https://registry.npmjs.org/)"; then
+              latest="$(printf '%s\n' "$tags" | awk -F': ' '$1 == "latest" { print $2 }')"
+              if [ "$current" = "$target" ] && [ "$latest" = "$target" ]; then
+                exit 0
+              fi
+              echo "npm registry reports version=${current}, latest=${latest}; waiting for ${target} (attempt ${attempt}/10)..."
+            else
+              echo "npm registry metadata read failed (attempt ${attempt}/10); retrying in 6s..."
             fi
-            echo "npm registry has not exposed @joohw/boss-cli@${target} yet (attempt ${attempt}/10); retrying in 6s..."
             sleep 6
           done
-          echo "Timed out waiting for @joohw/boss-cli@${target} to appear in npm view" >&2
+          echo "Timed out waiting for @joohw/boss-cli npm latest to become ${target}" >&2
           exit 1
 
   release:
