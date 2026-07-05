@@ -3,8 +3,9 @@ import { createHash } from 'node:crypto';
 const CHECK_ENTRY_URL = 'https://www.zhipin.com/web/chat/index';
 const CHECK_LOGIN_URL = 'https://www.zhipin.com/web/user/?ka=header-login';
 const CHECK_TIMEOUT_MS = 20_000;
-const VERIFIED_CAPTURE_LABEL = '2026-07-01 boss-online-js snapshot';
-const VERIFIED_BOSS_INDEX_VERSION = 'v10493';
+const VERIFIED_CAPTURE_LABEL = '2026-07-05 boss-online-js snapshot';
+const VERIFIED_BOSS_INDEX_VERSION = 'v10576';
+const VERIFIED_BOSS_BUNDLE_VERSION = 'v6199';
 const VERIFIED_ZHIPIN_SIGN_VERSION = 'v5303';
 
 const CHECK_HEADERS = {
@@ -16,12 +17,16 @@ const CHECK_HEADERS = {
 const REQUIRED_ENTRY_SCRIPT_URLS = [
   'https://static.zhipin.com/assets/sdk/warlock/warlockdata.min.2.2.14.js',
   'https://static.zhipin.com/assets/sdk/apm/patas-compat.2.1.0.min.js',
-  'https://static.zhipin.com/zhipin-boss/index/v10493/static/js/polyfill.js',
-  'https://static.zhipin.com/zhipin-boss/index/v10493/static/js/app.js',
-  'https://static.zhipin.com/zhipin-boss/index/v10493/static/js/risk-detection.js',
+  'https://static.zhipin.com/assets/zhipin/chat/mqtt-v1.2.min.js',
+  'https://static.zhipin.com/zhipin-boss/index/v10576/static/js/polyfill.js',
+  'https://static.zhipin.com/zhipin-boss/index/v10576/static/js/app.js',
+  'https://static.zhipin.com/zhipin-boss/index/v10576/static/js/risk-detection.js',
 ] as const;
 
 const REQUIRED_LOGIN_SCRIPT_URLS = [
+  'https://img.bosszhipin.com/static/zhipin/geek/sdk/browser-check-v2.js',
+  'https://static.zhipin.com/assets/sdk/apm/patas.2.0.2.min.js',
+  'https://static.zhipin.com/assets/sdk/warlock/warlockdata.min.2.2.15.js',
   'https://static.zhipin.com/zhipin-sign/v5303/static/js/iframe-core.7fa9fa18.js',
   'https://static.zhipin.com/zhipin-sign/v5303/static/js/vendors~app.9ac375ae.js',
   'https://static.zhipin.com/zhipin-sign/v5303/static/js/app.e70560e8.js',
@@ -29,19 +34,54 @@ const REQUIRED_LOGIN_SCRIPT_URLS = [
 
 const GUARDED_SCRIPT_HASHES = [
   {
+    label: 'browser-check-v2',
+    url: 'https://img.bosszhipin.com/static/zhipin/geek/sdk/browser-check-v2.js',
+    sha256: '0ba94a338ed00ba353384a091f36fca73c67651cf6fe28c588c5e926aaa0399e',
+  },
+  {
+    label: 'chat apm patas-compat',
+    url: 'https://static.zhipin.com/assets/sdk/apm/patas-compat.2.1.0.min.js',
+    sha256: '2c8d059c16800f91639bc7eb2040bfa8a211425d02a8b702831c9cd5b2f6315a',
+  },
+  {
+    label: 'login apm patas',
+    url: 'https://static.zhipin.com/assets/sdk/apm/patas.2.0.2.min.js',
+    sha256: '71c2b6867a3a6aaf9dd241ae2d5fa9a6d0f57e7e026850730d37c05f57ac702a',
+  },
+  {
+    label: 'chat warlock',
+    url: 'https://static.zhipin.com/assets/sdk/warlock/warlockdata.min.2.2.14.js',
+    sha256: '5979a30734aa6ce729989e545c61f52a8b6e717bdd544e894e3c60db893e7d68',
+  },
+  {
+    label: 'login warlock',
+    url: 'https://static.zhipin.com/assets/sdk/warlock/warlockdata.min.2.2.15.js',
+    sha256: '51bd06ef6a77d5ceecef040c5ff8c44324f425104bb505137302de1e20327345',
+  },
+  {
+    label: 'chat mqtt',
+    url: 'https://static.zhipin.com/assets/zhipin/chat/mqtt-v1.2.min.js',
+    sha256: 'd63db9287a0aba5dc81c3b1fb393303a63b1a6c0dd0aec5bc26ddc84b0dfc67f',
+  },
+  {
     label: 'boss-index app',
-    url: 'https://static.zhipin.com/zhipin-boss/index/v10493/static/js/app.js',
-    sha256: '0677ac27dcabc3e8b736125c6f7e591677e7b7425600ffb8d76f42e1208db854',
+    url: 'https://static.zhipin.com/zhipin-boss/index/v10576/static/js/app.js',
+    sha256: 'b91469afe517deb1ec087263c9bc3143de80fcf66274f2eb19cdd14cbf0e6287',
+  },
+  {
+    label: 'boss-index polyfill',
+    url: 'https://static.zhipin.com/zhipin-boss/index/v10576/static/js/polyfill.js',
+    sha256: '15da7c1e13b9782ebd830ba89f025c38d40ba8d693803f243567692cf13efd75',
   },
   {
     label: 'boss-index risk-detection',
-    url: 'https://static.zhipin.com/zhipin-boss/index/v10493/static/js/risk-detection.js',
-    sha256: '143ca4be1cdb1c927c22feeede5798f0d4ae136750b0455889a78599ea14545d',
+    url: 'https://static.zhipin.com/zhipin-boss/index/v10576/static/js/risk-detection.js',
+    sha256: 'e45550dc3f786420b64821dc5934e019948ffab7a16309b77ccec8ed00bee030',
   },
   {
     label: 'boss-bundle remoteEntry',
-    url: 'https://static.zhipin.com/zhipin-boss/bundle/v6189/static/remoteEntry.js',
-    sha256: 'd26530395df94c987a60046f2bd0b5c54d79e69fa67ff81aa090febd25c4067f',
+    url: 'https://static.zhipin.com/zhipin-boss/bundle/v6199/static/remoteEntry.js',
+    sha256: '83de457b57b3b35ed4f592bdc2adb130099fe8497ce5adce2349692e66f0a5b4',
   },
   {
     label: 'zhipin-sign app',
@@ -111,7 +151,7 @@ function sha256(buffer: Buffer): string {
 function formatDisabledMessage(reasons: string[]): string {
   return [
     'Boss CLI 已禁用：Boss 线上前端 JS 与已验证基线不一致。',
-    `已验证基线：${VERIFIED_CAPTURE_LABEL}，Boss index ${VERIFIED_BOSS_INDEX_VERSION}，Zhipin sign ${VERIFIED_ZHIPIN_SIGN_VERSION}。`,
+    `已验证基线：${VERIFIED_CAPTURE_LABEL}，Boss index ${VERIFIED_BOSS_INDEX_VERSION}，Boss bundle ${VERIFIED_BOSS_BUNDLE_VERSION}，Zhipin sign ${VERIFIED_ZHIPIN_SIGN_VERSION}。`,
     '',
     '触发原因：',
     ...reasons.map((reason) => `- ${reason}`),

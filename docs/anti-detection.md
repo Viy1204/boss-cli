@@ -194,8 +194,8 @@ if (b - a > THRESHOLD) {  // DevTools 打开
 
 **当前现状（2026-07-01 复查）**：
 
-- 线上聊天壳为 `zhipin-boss/index/v10493/static/js/app.js`，该入口继续动态加载
-  `zhipin-boss/bundle/v6189/static/remoteEntry.js` 与业务 chunks；反调试主逻辑仍位于
+- 线上聊天壳为 `zhipin-boss/index/v10576/static/js/app.js`，该入口继续动态加载
+  `zhipin-boss/bundle/v6199/static/remoteEntry.js` 与业务 chunks；反调试主逻辑仍位于
   `zhipin-sign/v5303/static/js/vendors~app.9ac375ae.js` 的 `VXjk` 模块。
 - **console 时间差路径**已被 §三.2 打掉，DevTools 打开下不再触发关页/跳转。
 - **console 副作用路径**（探测对象上的 `RegExp.toString` / `Date.toString` / `Function.toString` /
@@ -234,7 +234,7 @@ if (b - a > THRESHOLD) {  // DevTools 打开
 
 | 文件 | 路径 |
 |------|------|
-| 风险检测 | `https://static.zhipin.com/zhipin-boss/index/v10493/static/js/risk-detection.js` |
+| 风险检测 | `https://static.zhipin.com/zhipin-boss/index/v10576/static/js/risk-detection.js` |
 
 **定位**：webpack 入口模块 `42302`，独立的"DOM 注入 + 全局污染 + 合成点击"完整性检测器。
 不依赖 console 副作用、不依赖 DevTools 开关，只看页面 DOM/window/click 形态有无被外部

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Boss Frontend Analysis"
+  short_description: "Capture and diff Boss frontend JS"
+  default_prompt: "Use $boss-frontend-analysis to capture current Boss frontend scripts, compare them with the verified baseline, and recommend boss-cli code changes."
