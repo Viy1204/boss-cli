@@ -1,0 +1,206 @@
+import { createHash } from 'node:crypto';
+
+const CHECK_ENTRY_URL = 'https://www.zhipin.com/web/chat/index';
+const CHECK_LOGIN_URL = 'https://www.zhipin.com/web/user/?ka=header-login';
+const CHECK_TIMEOUT_MS = 20_000;
+const VERIFIED_CAPTURE_LABEL = '2026-07-01 boss-online-js snapshot';
+const VERIFIED_BOSS_INDEX_VERSION = 'v10493';
+const VERIFIED_ZHIPIN_SIGN_VERSION = 'v5303';
+
+const CHECK_HEADERS = {
+  'user-agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+  accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+} as const;
+
+const REQUIRED_ENTRY_SCRIPT_URLS = [
+  'https://static.zhipin.com/assets/sdk/warlock/warlockdata.min.2.2.14.js',
+  'https://static.zhipin.com/assets/sdk/apm/patas-compat.2.1.0.min.js',
+  'https://static.zhipin.com/zhipin-boss/index/v10493/static/js/polyfill.js',
+  'https://static.zhipin.com/zhipin-boss/index/v10493/static/js/app.js',
+  'https://static.zhipin.com/zhipin-boss/index/v10493/static/js/risk-detection.js',
+] as const;
+
+const REQUIRED_LOGIN_SCRIPT_URLS = [
+  'https://static.zhipin.com/zhipin-sign/v5303/static/js/iframe-core.7fa9fa18.js',
+  'https://static.zhipin.com/zhipin-sign/v5303/static/js/vendors~app.9ac375ae.js',
+  'https://static.zhipin.com/zhipin-sign/v5303/static/js/app.e70560e8.js',
+] as const;
+
+const GUARDED_SCRIPT_HASHES = [
+  {
+    label: 'boss-index app',
+    url: 'https://static.zhipin.com/zhipin-boss/index/v10493/static/js/app.js',
+    sha256: '0677ac27dcabc3e8b736125c6f7e591677e7b7425600ffb8d76f42e1208db854',
+  },
+  {
+    label: 'boss-index risk-detection',
+    url: 'https://static.zhipin.com/zhipin-boss/index/v10493/static/js/risk-detection.js',
+    sha256: '143ca4be1cdb1c927c22feeede5798f0d4ae136750b0455889a78599ea14545d',
+  },
+  {
+    label: 'boss-bundle remoteEntry',
+    url: 'https://static.zhipin.com/zhipin-boss/bundle/v6189/static/remoteEntry.js',
+    sha256: 'd26530395df94c987a60046f2bd0b5c54d79e69fa67ff81aa090febd25c4067f',
+  },
+  {
+    label: 'zhipin-sign app',
+    url: 'https://static.zhipin.com/zhipin-sign/v5303/static/js/app.e70560e8.js',
+    sha256: '44cadac8469fc838146ea728f17a39354f186b241dfdb10d036f981b5f3552de',
+  },
+  {
+    label: 'zhipin-sign iframe-core',
+    url: 'https://static.zhipin.com/zhipin-sign/v5303/static/js/iframe-core.7fa9fa18.js',
+    sha256: '2170fa54732f95da0b233a80a5cec6858bb2c8aec15361febe4764200a4eb02d',
+  },
+  {
+    label: 'zhipin-sign vendor',
+    url: 'https://static.zhipin.com/zhipin-sign/v5303/static/js/vendors~app.9ac375ae.js',
+    sha256: 'bf6cd6d0be836703b86916f2ddeee69987e4e3c4f9476f16091bf9314458883b',
+  },
+] as const;
+
+export class BossAvailabilityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BossAvailabilityError';
+  }
+}
+
+function normalizeRemoteUrl(raw: string, baseUrl: string): string | null {
+  try {
+    return new URL(raw, baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+function extractAssetUrls(html: string, baseUrl: string): string[] {
+  const urls = new Set<string>();
+  const attrRe = /<(?:script|link)\b[^>]+(?:src|href)=["']([^"']+)["']/gi;
+  for (const match of html.matchAll(attrRe)) {
+    const raw = match[1];
+    if (!raw) {
+      continue;
+    }
+    const url = normalizeRemoteUrl(raw, baseUrl);
+    if (url) {
+      urls.add(url);
+    }
+  }
+  return Array.from(urls).sort();
+}
+
+async function fetchBufferStrict(url: string): Promise<{ buffer: Buffer; finalUrl: string }> {
+  const res = await fetch(url, {
+    headers: CHECK_HEADERS,
+    redirect: 'follow',
+    signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} ${res.statusText} while fetching ${url}`);
+  }
+  const body = Buffer.from(await res.arrayBuffer());
+  return { buffer: body, finalUrl: res.url || url };
+}
+
+function sha256(buffer: Buffer): string {
+  return createHash('sha256').update(buffer).digest('hex');
+}
+
+function formatDisabledMessage(reasons: string[]): string {
+  return [
+    'Boss CLI 已禁用：Boss 线上前端 JS 与已验证基线不一致。',
+    `已验证基线：${VERIFIED_CAPTURE_LABEL}，Boss index ${VERIFIED_BOSS_INDEX_VERSION}，Zhipin sign ${VERIFIED_ZHIPIN_SIGN_VERSION}。`,
+    '',
+    '触发原因：',
+    ...reasons.map((reason) => `- ${reason}`),
+    '',
+    '处理方式：重新归档 Boss 线上原始 JS，复核反调试/风控策略，然后更新 boss_availability 基线后再发版。',
+  ].join('\n');
+}
+
+async function assertEntryPageMatches(params: {
+  pageLabel: string;
+  url: string;
+  requiredScripts: readonly string[];
+  versionPath: string;
+  verifiedVersion: string;
+  scriptFamilyLabel: string;
+}): Promise<string[]> {
+  try {
+    const reasons: string[] = [];
+    const { buffer, finalUrl } = await fetchBufferStrict(params.url);
+    if (finalUrl !== params.url) {
+      reasons.push(`${params.pageLabel} 发生跳转：${params.url} -> ${finalUrl}`);
+    }
+    const assetUrls = extractAssetUrls(buffer.toString('utf8'), params.url);
+    const missingEntryScripts = params.requiredScripts.filter(
+      (url) => !assetUrls.includes(url),
+    );
+    for (const url of missingEntryScripts) {
+      reasons.push(`${params.pageLabel} 缺少已验证脚本：${url}`);
+    }
+
+    const unexpectedScripts = assetUrls.filter(
+      (url) =>
+        url.includes(params.versionPath) &&
+        !url.includes(`${params.versionPath}${params.verifiedVersion}/`),
+    );
+    for (const url of unexpectedScripts) {
+      reasons.push(`${params.pageLabel} 引用了未验证 ${params.scriptFamilyLabel} 脚本：${url}`);
+    }
+    return reasons;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return [`无法读取 ${params.pageLabel} ${params.url}：${msg}`];
+  }
+}
+
+export async function assertBossCliAvailable(): Promise<void> {
+  const reasons = [
+    ...(await assertEntryPageMatches({
+      pageLabel: 'Boss 聊天入口页',
+      url: CHECK_ENTRY_URL,
+      requiredScripts: REQUIRED_ENTRY_SCRIPT_URLS,
+      versionPath: '/zhipin-boss/index/',
+      verifiedVersion: VERIFIED_BOSS_INDEX_VERSION,
+      scriptFamilyLabel: 'Boss index',
+    })),
+    ...(await assertEntryPageMatches({
+      pageLabel: 'Boss 登录入口页',
+      url: CHECK_LOGIN_URL,
+      requiredScripts: REQUIRED_LOGIN_SCRIPT_URLS,
+      versionPath: '/zhipin-sign/',
+      verifiedVersion: VERIFIED_ZHIPIN_SIGN_VERSION,
+      scriptFamilyLabel: 'Zhipin sign',
+    })),
+  ];
+
+  if (reasons.length > 0) {
+    throw new BossAvailabilityError(formatDisabledMessage(reasons));
+  }
+
+  for (const guarded of GUARDED_SCRIPT_HASHES) {
+    try {
+      const { buffer, finalUrl } = await fetchBufferStrict(guarded.url);
+      if (finalUrl !== guarded.url) {
+        reasons.push(`${guarded.label} 发生跳转：${guarded.url} -> ${finalUrl}`);
+        continue;
+      }
+      const actualSha256 = sha256(buffer);
+      if (actualSha256 !== guarded.sha256) {
+        reasons.push(
+          `${guarded.label} SHA-256 不一致：expected ${guarded.sha256}, actual ${actualSha256}`,
+        );
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      reasons.push(`${guarded.label} 读取失败：${msg}`);
+    }
+  }
+
+  if (reasons.length > 0) {
+    throw new BossAvailabilityError(formatDisabledMessage(reasons));
+  }
+}

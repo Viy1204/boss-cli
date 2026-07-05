@@ -16,6 +16,7 @@ import {
 } from '../browser/browser_session.js';
 import { CONTEXT_DESTROY_RETRY_MS } from '../browser/human_delay.js';
 import { sleepRandom } from '../browser/timing.js';
+import { assertBossCliAvailable } from './boss_availability.js';
 import { installBossPageGuards } from './boss_page_guards.js';
 import { withBossSessionLock } from './boss_session_lock.js';
 
@@ -135,6 +136,8 @@ async function ensureMenuListMountedAfterLoad(page: Page): Promise<void> {
  * 再校验侧栏；回调内可再导航到职位/推荐等业务路由。
  */
 export async function withBossSessionPage<T>(callback: (page: Page) => Promise<T>): Promise<T> {
+  await assertBossCliAvailable();
+
   return withBossSessionLock(async () => {
     const isContextDestroyed = (e: unknown): boolean => {
     const msg = e instanceof Error ? e.message : String(e);
