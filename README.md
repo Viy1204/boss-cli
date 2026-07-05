@@ -156,6 +156,22 @@ npm run dev     # build + 交互模式
 
 ---
 
+## 发布
+
+仓库通过 GitHub Actions 自动发布，工作流文件是 `.github/workflows/tag-publish.yml`。
+
+发布新版本时，本地只需要更新 `package.json` 版本号、提交代码、创建并推送 `v*` tag：
+
+```bash
+git tag -a v0.6.0 -m "v0.6.0"
+git push origin main
+git push origin v0.6.0
+```
+
+tag 推送后，workflow 会自动安装依赖、构建、检查 npm 版本、发布 `@joohw/boss-cli`、更新 `latest` dist-tag，并创建或更新 GitHub Release。npm 发布依赖仓库 Secret `NPM_TOKEN`，本地不需要手动执行 `npm publish`。
+
+---
+
 ## 许可
 
 [GPL-3.0](./LICENSE)
