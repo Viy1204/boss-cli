@@ -1,6 +1,12 @@
 import process from 'node:process';
 import type { Page } from 'puppeteer-core';
-import { selectAllModifierKey, sleepRandom } from '../browser/index.js';
+import {
+  JOB_SEARCH_ACTION_GAP_MS,
+  JOB_SELECT_ACTION_GAP_MS,
+  RESUME_PREVIEW_OPEN_GAP_MS,
+  selectAllModifierKey,
+  sleepRandom,
+} from '../browser/index.js';
 import { withBossSessionPage } from '../common/boss_session_page.js';
 import { clickBossSidebarMenuToPath } from '../common/boss_sidebar_nav.js';
 
@@ -876,6 +882,7 @@ export async function selectAiFormJob(page: Page, keyword: string): Promise<stri
   if (!opened) {
     throw new Error('未找到深度搜索页岗位下拉（.job-dropmenu-select）。');
   }
+  await sleepRandom(JOB_SELECT_ACTION_GAP_MS.min, JOB_SELECT_ACTION_GAP_MS.max);
   await waitForAiFormJobDropdownReady(page);
 
   const searched = (await page.evaluate(`(() => {
@@ -898,6 +905,7 @@ export async function selectAiFormJob(page: Page, keyword: string): Promise<stri
     return true;
   })()`)) as boolean;
   if (searched) {
+    await sleepRandom(JOB_SEARCH_ACTION_GAP_MS.min, JOB_SEARCH_ACTION_GAP_MS.max);
     await waitForAiFormJobSearchResults(page, kw);
   }
 
@@ -930,6 +938,7 @@ export async function selectAiFormJob(page: Page, keyword: string): Promise<stri
     throw new Error(`未找到匹配岗位「${kw}」。`);
   }
   const label = picked.label ?? kw;
+  await sleepRandom(JOB_SELECT_ACTION_GAP_MS.min, JOB_SELECT_ACTION_GAP_MS.max);
   await waitForAiFormJobSelected(page, label);
   return label;
 }
@@ -950,7 +959,7 @@ export async function readAiFormSelectedJobLabel(page: Page): Promise<string> {
 export async function openDeepSearchResumePreview(page: Page, target: string): Promise<boolean> {
   const raw = target.trim();
   const targetLiteral = JSON.stringify(raw);
-  return (await page.evaluate(`(() => {
+  const opened = (await page.evaluate(`(() => {
     const raw = ${targetLiteral};
     const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
     const allCards = Array.from(
@@ -1006,6 +1015,10 @@ export async function openDeepSearchResumePreview(page: Page, target: string): P
 
     return false;
   })()`)) as boolean;
+  if (opened) {
+    await sleepRandom(RESUME_PREVIEW_OPEN_GAP_MS.min, RESUME_PREVIEW_OPEN_GAP_MS.max);
+  }
+  return opened;
 }
 
 export async function readDeepSearchGeekList(page: Page): Promise<DeepSearchGeekItem[]> {

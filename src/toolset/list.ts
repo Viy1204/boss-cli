@@ -1,5 +1,10 @@
 import type { Page } from 'puppeteer-core';
-import { LIST_MIN_BEFORE_EMPTY_OK_MS, LIST_POLL_MS, sleepRandom } from '../browser/index.js';
+import {
+  LIST_FILTER_GAP_MS,
+  LIST_MIN_BEFORE_EMPTY_OK_MS,
+  LIST_POLL_MS,
+  sleepRandom,
+} from '../browser/index.js';
 import { isBossChatIndexUrl } from '../common/auth.js';
 import { withBossSessionPage } from '../common/boss_session_page.js';
 import { clickBossSidebarMenuToPath } from '../common/boss_sidebar_nav.js';
@@ -103,6 +108,7 @@ export async function ensureChatIndexAllFilter(page: Page): Promise<void> {
   );
 
   await clickChatFilterTabAll(page);
+  await sleepRandom(LIST_FILTER_GAP_MS.min, LIST_FILTER_GAP_MS.max);
   await waitForChatFilterAllSelected(page);
   await waitForCandidateListSettled(page, {
     timeoutMs: 18_000,

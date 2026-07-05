@@ -1,4 +1,5 @@
 import type { Page } from 'puppeteer-core';
+import { SIDEBAR_NAV_AFTER_CLICK_MS, sleepRandom } from '../browser/index.js';
 
 const SIDEBAR_NAV_WAIT_MS = 15_000;
 
@@ -35,6 +36,8 @@ export async function clickBossSidebarMenuToPath(
   if (!clicked) {
     throw new Error(`未找到侧边栏菜单“${menuLabel}”，无法跳转到 ${targetPath}。`);
   }
+
+  await sleepRandom(SIDEBAR_NAV_AFTER_CLICK_MS.min, SIDEBAR_NAV_AFTER_CLICK_MS.max);
 
   await page.waitForFunction(
     `((path) => {

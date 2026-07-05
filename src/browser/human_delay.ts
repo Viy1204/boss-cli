@@ -12,6 +12,9 @@ export const CHAT_GOTO_SETTLE_MS = { min: 2800, max: 5200 } as const;
 /** 页面执行上下文被销毁后重试前 */
 export const CONTEXT_DESTROY_RETRY_MS = { min: 900, max: 1800 } as const;
 
+/** 侧栏导航点击后，等待路由与 SPA 状态开始变化 */
+export const SIDEBAR_NAV_AFTER_CLICK_MS = { min: 420, max: 1100 } as const;
+
 /** 列表滚动查找候选人时，每轮之间的间隔 */
 export const OPEN_CHAT_SCROLL_GAP_MS = { min: 240, max: 760 } as const;
 
@@ -23,6 +26,15 @@ export const MOUSE_CLICK_PRESS_MS = { min: 55, max: 180 } as const;
 
 /** 筛选「全部」等操作之间的停顿 */
 export const LIST_FILTER_GAP_MS = { min: 780, max: 1400 } as const;
+
+/** 岗位下拉打开、搜索输入、选择岗位等连续动作之间的停顿 */
+export const JOB_SELECT_ACTION_GAP_MS = { min: 280, max: 760 } as const;
+
+/** 岗位搜索输入后，等待前端过滤/接口刷新开始响应 */
+export const JOB_SEARCH_ACTION_GAP_MS = { min: 420, max: 980 } as const;
+
+/** 点击候选人卡片打开简历预览后，等待弹层/iframe 开始挂载 */
+export const RESUME_PREVIEW_OPEN_GAP_MS = { min: 420, max: 1100 } as const;
 
 /** 列表稳定轮询间隔（随机） */
 export const LIST_POLL_MS = { min: 420, max: 780 } as const;

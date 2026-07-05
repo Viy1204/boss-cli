@@ -1,4 +1,10 @@
 import type { Frame, Page } from 'puppeteer-core';
+import {
+  JOB_SEARCH_ACTION_GAP_MS,
+  JOB_SELECT_ACTION_GAP_MS,
+  RESUME_PREVIEW_OPEN_GAP_MS,
+  sleepRandom,
+} from '../browser/index.js';
 import { withBossSessionPage } from '../common/boss_session_page.js';
 import { clickBossSidebarMenuToPath } from '../common/boss_sidebar_nav.js';
 
@@ -143,6 +149,7 @@ export async function selectRecommendJob(frame: Frame, keyword: string): Promise
   if (!opened) {
     throw new Error('未找到岗位下拉入口（.job-selecter-wrap .ui-dropmenu-label）。');
   }
+  await sleepRandom(JOB_SELECT_ACTION_GAP_MS.min, JOB_SELECT_ACTION_GAP_MS.max);
   await waitForRecommendJobDropdownReady(frame);
 
   const searched = (await frame.evaluate(`(() => {
@@ -158,6 +165,7 @@ export async function selectRecommendJob(frame: Frame, keyword: string): Promise
   if (!searched) {
     throw new Error('已打开岗位下拉，但未找到职位搜索框（.chat-job-search）。');
   }
+  await sleepRandom(JOB_SEARCH_ACTION_GAP_MS.min, JOB_SEARCH_ACTION_GAP_MS.max);
   await waitForRecommendJobSearchResults(frame, kw);
 
   const picked = (await frame.evaluate(`(() => {
@@ -181,6 +189,7 @@ export async function selectRecommendJob(frame: Frame, keyword: string): Promise
     throw new Error(`未找到匹配岗位“${kw}”。`);
   }
   const label = picked.label ?? kw;
+  await sleepRandom(JOB_SELECT_ACTION_GAP_MS.min, JOB_SELECT_ACTION_GAP_MS.max);
   await waitForRecommendJobSelected(frame, label);
   return label;
 }
@@ -421,7 +430,7 @@ export function markGreetProduced(
 export async function openRecommendResumePreview(frame: Frame, target: string): Promise<boolean> {
   const raw = target.trim();
   const targetLiteral = JSON.stringify(raw);
-  return (await frame.evaluate(`(() => {
+  const opened = (await frame.evaluate(`(() => {
     const raw = ${targetLiteral};
     const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
     const cardSel = ${JSON.stringify(RECOMMEND_CARD_ROOT_SELECTOR)};
@@ -465,6 +474,10 @@ export async function openRecommendResumePreview(frame: Frame, target: string): 
 
     return false;
   })()`)) as boolean;
+  if (opened) {
+    await sleepRandom(RESUME_PREVIEW_OPEN_GAP_MS.min, RESUME_PREVIEW_OPEN_GAP_MS.max);
+  }
+  return opened;
 }
 
 export async function runRecommend(jobKeyword?: string): Promise<string> {

@@ -1,5 +1,11 @@
 import type { Page } from 'puppeteer-core';
-import { OPEN_CHAT_SCROLL_GAP_MS, sleepRandom } from '../browser/index.js';
+import {
+  CHAT_HISTORY_DIALOG_WAIT_MS,
+  CHAT_HISTORY_TAB_SWITCH_MS,
+  OPEN_CHAT_AFTER_ROW_CLICK_MS,
+  OPEN_CHAT_SCROLL_GAP_MS,
+  sleepRandom,
+} from '../browser/index.js';
 import { isBossChatIndexUrl } from '../common/auth.js';
 import { ensureChatIndexAllFilter } from './list.js';
 
@@ -84,6 +90,8 @@ async function fetchColleagueChatHistorySection(page: Page): Promise<string | nu
     return null;
   }
 
+  await sleepRandom(CHAT_HISTORY_DIALOG_WAIT_MS.min, CHAT_HISTORY_DIALOG_WAIT_MS.max);
+
   try {
     await waitForChatHistoryPanelReady(page);
   } catch {
@@ -123,10 +131,12 @@ async function fetchColleagueChatHistorySection(page: Page): Promise<string | nu
     );
 
   await clickTab('同事沟通');
+  await sleepRandom(CHAT_HISTORY_TAB_SWITCH_MS.min, CHAT_HISTORY_TAB_SWITCH_MS.max);
   await waitForChatHistoryPanelReady(page, '同事沟通');
   const rowsColleague = await scrapeRows();
 
   await clickTab('我的沟通');
+  await sleepRandom(CHAT_HISTORY_TAB_SWITCH_MS.min, CHAT_HISTORY_TAB_SWITCH_MS.max);
   await waitForChatHistoryPanelReady(page, '我的沟通');
   const rowsMine = await scrapeRows();
 
@@ -361,6 +371,8 @@ export async function runOpenCandidateChat(
       row.scrollIntoView({ behavior: "instant", block: "center", inline: "nearest" });
       row.click();
     })`);
+
+    await sleepRandom(OPEN_CHAT_AFTER_ROW_CLICK_MS.min, OPEN_CHAT_AFTER_ROW_CLICK_MS.max);
 
     let selected = await targetWrap
       .$eval('.geek-item', (el) => el.classList.contains('selected'))
