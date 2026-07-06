@@ -28,6 +28,7 @@ boss help
 | Boss直聘批量发消息 | `boss send --text "..."` 配合脚本循环 |
 | Boss直聘自动打招呼 | `boss greet <姓名> [--job <岗位>]` |
 | Boss直聘候选人筛选 | `boss list` / `boss list --unread` |
+| Boss直聘人才库搜索 | `boss search <关键词> [--job <岗位>]` |
 | Boss直聘脚本自动化 | 本机 Chrome + CDP，Cookie 本地存储 |
 | AI 招聘 Agent | 子进程调用，输出 Agent 友好 |
 | 数据隐私 | 不经过第三方服务器，数据在 `~/.boss-cli/` |
@@ -71,7 +72,8 @@ boss help
 | `boss recommend [岗位关键字]` | 读取推荐候选人列表 |
 | `boss greet <姓名> [--job <岗位>]` | 对推荐候选人打招呼（有次数限制） |
 | `boss preview <姓名> [--job <岗位>]` | 在线简历预览（每日次数有限） |
-| `boss deep-search [岗位关键字]` | 深度搜索列表 / 触发立即匹配 |
+| `boss deep-search [岗位关键字]` | 深度搜索（AI 搜索）当前匹配列表（只读，不消耗每日配额） |
+| `boss search [关键词...] [--job <岗位>] [--greet <序号,...>]` | 人才库搜索；可选按序号点「立即沟通」打招呼 |
 | `boss positions` | 读取职位列表 |
 | `boss jd <名称>` | 抓取职位 JD 缓存到本地 |
 
