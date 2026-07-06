@@ -18,6 +18,7 @@ import {
   implRecommendGreet,
   implSetBaiduCredentials,
   implBossSearch,
+  implTalentSearch,
   implSendMessage,
   type ChatPageAction,
 } from '../toolset/index.js';
@@ -161,7 +162,7 @@ function printHelp(): void {
   boss recommend [岗位关键字]
       进入推荐页并读取推荐列表；带岗位关键字时先在岗位下拉中模糊匹配并切换
   boss preview <姓名> [--job <岗位关键字>]
-      在线简历预览：须当前已在「推荐」(/web/chat/recommend) 或「深度搜索」(/web/chat/aiform) 且列表已加载；不会自动跳转
+      在线简历预览：须当前已在「推荐」(/web/chat/recommend) 或「深度搜索」(/web/chat/search/ai) 且列表已加载；不会自动跳转
       注意：平台对在线简历每日可查看次数有限，请按需使用、谨慎查看
   boss greet <姓名> [--job <岗位关键字>]
       在「推荐」页（或当前已在 Boss 聊天侧栏打开的、含候选人列表的页面）对列表中的候选人点击“打招呼”
@@ -169,8 +170,15 @@ function printHelp(): void {
       须先在对应页加载出候选人列表
       会消耗打招呼次数且单次成本较高，请谨慎使用
   boss deep-search [岗位关键字]（别名 deepsearch）
-      进入「深度搜索」页并输出当前匹配结果列表；可选岗位关键字仅切换下拉框。不会点击「立即匹配」
-  
+      进入「深度搜索」页（/web/chat/search/ai）并输出当前匹配结果列表；带岗位关键字时按职位直达
+      不会点击「深度搜索」按钮（该按钮每日有配额）
+  boss search [关键词...] [--job <岗位关键字>] [--greet <序号,序号...>]
+      人才库搜索（/web/chat/search）：按关键词/岗位搜索全网牛人，输出第一页结果
+      关键词与 --job 至少提供一个；--job 不限 可切回「不限职位」
+      结果姓名为平台打码（如 张**），建立沟通后可见
+      --greet 对本次结果按序号点「立即沟通」发起打招呼（对应本次输出顺序）
+      逐个点击、随机间隔，点后校验状态，连续无效果自动中止；会消耗每日沟通额度，请谨慎使用
+
   !!鉴于boss的风控机制存在更新，且本cli的功能在逐步完善中，若遇到部分操作问题，请先检查版本更新
 `);
 }
@@ -388,6 +396,33 @@ export async function executeCommand(argv: string[]): Promise<string> {
     }
     const jobKeyword = rest.join(' ').trim();
     return implBossSearch(jobKeyword ? { jobKeyword } : {});
+  }
+
+  if (cmd === 'search') {
+    const { rest, opts, flags } = parseOpts(tail);
+    if (flags.size > 0) {
+      die('❌ 用法: search [关键词...] [--job <岗位关键字>] [--greet <序号,序号...>]');
+    }
+    const disallowed = Object.keys(opts).filter((k) => k !== 'job' && k !== 'greet');
+    if (disallowed.length > 0) {
+      die(`❌ search 不支持: --${disallowed[0]}`);
+    }
+    const keywords = rest.join(' ').trim();
+    const jobKeyword = opts.job?.trim() ?? '';
+    if (!keywords && !jobKeyword) {
+      die('❌ 用法: search [关键词...] [--job <岗位关键字>]（关键词与 --job 至少一个）');
+    }
+    let greetIndexes: number[] | undefined;
+    if (opts.greet != null) {
+      greetIndexes = String(opts.greet)
+        .split(',')
+        .map((s) => parseInt(s.trim(), 10))
+        .filter((n) => Number.isInteger(n) && n > 0);
+      if (greetIndexes.length === 0) {
+        die('❌ --greet 需为逗号分隔的正整数序号（对应本次搜索输出顺序），如 --greet 1,3,5');
+      }
+    }
+    return implTalentSearch({ keywords, jobKeyword, greetIndexes });
   }
 
   if (cmd === 'preview') {
