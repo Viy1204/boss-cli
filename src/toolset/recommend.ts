@@ -48,23 +48,36 @@ export function isBossChatRecommendUrl(url: string): boolean {
 }
 
 async function getRecommendFrame(page: Page): Promise<Frame> {
-  await page.waitForSelector('iframe[name="recommendFrame"]', { timeout: 18_000 });
-  const frameByName = page.frames().find((f) => f.name() === 'recommendFrame') ?? null;
-  if (frameByName) {
-    return frameByName;
-  }
-  const frameByUrl =
-    page.frames().find((f) => {
-      try {
-        return f.url().includes('/web/frame/recommend');
-      } catch {
-        return false;
+  // iframe 元素入 DOM 与 frame 进入 CDP frame tree 之间有竞态，且改版后
+  // 其它页面也会预载 recommendFrame（jobid=null），需轮询等到 frame 上下文真正可用。
+  const start = Date.now();
+  let sawFrame = false;
+  while (Date.now() - start < 18_000) {
+    const frame =
+      page.frames().find((f) => {
+        try {
+          return f.name() === 'recommendFrame' || f.url().includes('/web/frame/recommend');
+        } catch {
+          return false;
+        }
+      }) ?? null;
+    if (frame) {
+      sawFrame = true;
+      const alive = await Promise.race([
+        frame.evaluate('1').catch(() => null),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 3_000)),
+      ]);
+      if (alive === 1) {
+        return frame;
       }
-    }) ?? null;
-  if (frameByUrl) {
-    return frameByUrl;
+    }
+    await sleepRandom(300, 600);
   }
-  throw new Error('已检测到推荐 iframe，但无法获取其页面上下文（recommendFrame）。');
+  throw new Error(
+    sawFrame
+      ? '已检测到推荐 iframe，但其页面上下文一直不可用（recommendFrame）。'
+      : '等待推荐 iframe 超时（recommendFrame）。',
+  );
 }
 
 async function ensureRecommendFrameReady(frame: Frame): Promise<void> {
@@ -222,7 +235,9 @@ export async function readRecommendList(frame: Frame): Promise<RecommendCandidat
   return (await frame.evaluate(`(() => {
     const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
     const cardSel = ${JSON.stringify(RECOMMEND_CARD_ROOT_SELECTOR)};
-    const cards = Array.from(document.querySelectorAll(cardSel));
+    const all = Array.from(document.querySelectorAll(cardSel));
+    // 新版一张卡同时命中 .card-item 与其内层 .candidate-card-wrap，只保留最外层，避免重复
+    const cards = all.filter((el) => !all.some((other) => other !== el && other.contains(el)));
     return cards.map((item) => {
       const inner = item.querySelector(".card-inner") || item;
       const wrap = item.matches(".candidate-card-wrap")

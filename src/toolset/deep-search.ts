@@ -1,21 +1,26 @@
-import process from 'node:process';
-import type { Page } from 'puppeteer-core';
-import {
-  JOB_SEARCH_ACTION_GAP_MS,
-  JOB_SELECT_ACTION_GAP_MS,
-  RESUME_PREVIEW_OPEN_GAP_MS,
-  selectAllModifierKey,
-  sleepRandom,
-} from '../browser/index.js';
+import type { Frame, Page } from 'puppeteer-core';
+import { RESUME_PREVIEW_OPEN_GAP_MS, sleepRandom } from '../browser/index.js';
 import { withBossSessionPage } from '../common/boss_session_page.js';
-import { clickBossSidebarMenuToPath } from '../common/boss_sidebar_nav.js';
+import { clickBossSidebarMenuToPath, waitForBossTopPath } from '../common/boss_sidebar_nav.js';
 
-const BOSS_CHAT_AI_FORM_URL = 'https://www.zhipin.com/web/chat/aiform';
+/**
+ * 2026-07 Boss 改版适配：深度搜索从 /web/chat/aiform 迁到 /web/chat/search/ai（「搜索」页的 AI 搜索模式）。
+ * 页面内容在 iframe[name=searchAiIframe]（/web/frame/search/ai）内；老「核心要求/加分项」两区块
+ * 合并为单一「定制要求」输入列表（input.prompt-input-field，maxlength=50）。
+ * 职位切换改为按 encryptId 直达：encryptId 即职位管理列表行的 data-id。
+ * 新版「深度搜索」按钮每日有配额（如 10/10）；本模块保持只读语义，绝不点击该按钮。
+ */
+const BOSS_CHAT_AI_SEARCH_PATH = '/web/chat/search/ai';
+const BOSS_CHAT_AI_SEARCH_URL = 'https://www.zhipin.com/web/chat/search/ai';
+const AI_SEARCH_FRAME_URL_PART = '/web/frame/search/ai';
+const SEARCH_FRAME_URL_PART = '/web/frame/search';
+const JOB_LIST_FRAME_URL_PART = '/web/frame/job/list';
+const AI_FORM_READY_TIMEOUT_MS = 35_000;
+const PROMPT_INPUT_MAX_LEN = 50;
 
 type SearchFormSnapshot = {
   selectedJob: string;
-  coreRequirements: string[];
-  bonusRequirements: string[];
+  requirements: string[];
   remainingCountText: string;
 };
 
@@ -34,932 +39,249 @@ export function isBossChatAiFormUrl(url: string): boolean {
       return false;
     }
     const p = u.pathname.replace(/\/+$/, '') || '/';
-    return p === '/web/chat/aiform';
+    return p === BOSS_CHAT_AI_SEARCH_PATH;
   } catch {
     return false;
   }
 }
 
-async function waitForAiFormReady(page: Page): Promise<void> {
-  await page.waitForFunction(
-    `(() => {
-      const root = document.querySelector(".ai-form-left");
-      const submit = document.querySelector(".ai-form-match-footer .btn-ai-match-v2");
-      const selected = document.querySelector(".job-dropmenu-select .job-main-text");
-      if (!root || !submit || !selected) {
-        return false;
+/** 限时执行 frame/page 的 CDP 调用：Boss 切页后主线程长任务会挂起 Runtime 调用，超时按失败处理由外层轮询。 */
+async function raceTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([
+    promise.catch(() => null),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+  ]);
+}
+
+async function findFrame(
+  page: Page,
+  match: (f: Frame) => boolean,
+  timeoutMs: number,
+): Promise<Frame | null> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const frame = page.frames().find(match);
+    if (frame) {
+      const alive = await raceTimeout(frame.evaluate('1'), 3_000);
+      if (alive === 1) {
+        return frame;
       }
-      const text = (selected.textContent ?? "").replace(/\\s+/g, " ").trim();
-      return text.length > 0;
-    })()`,
-    { timeout: 18_000 },
+    }
+    await sleepRandom(400, 700);
+  }
+  return null;
+}
+
+function isAiSearchFrame(f: Frame): boolean {
+  try {
+    return f.url().includes(AI_SEARCH_FRAME_URL_PART);
+  } catch {
+    return false;
+  }
+}
+
+function isPlainSearchFrame(f: Frame): boolean {
+  try {
+    const u = f.url();
+    return u.includes(SEARCH_FRAME_URL_PART) && !u.includes(AI_SEARCH_FRAME_URL_PART);
+  } catch {
+    return false;
+  }
+}
+
+type AiFormState = { hasBtn: boolean; remaining: number; total: number; rows: number };
+
+const AI_FORM_STATE_SCRIPT = `(() => {
+  const btn = document.querySelector(".btn-ai-match-v2");
+  const btnText = btn ? (btn.textContent ?? "").replace(/\\s+/g, " ").trim() : "";
+  const m = btnText.match(/\\((\\d+)\\s*\\/\\s*(\\d+)\\)/);
+  return {
+    hasBtn: !!btn,
+    remaining: m ? Number(m[1]) : -1,
+    total: m ? Number(m[2]) : -1,
+    rows: document.querySelectorAll(".prompt-list input.prompt-input-field").length,
+  };
+})()`;
+
+/** 等 AI 搜索 iframe 就绪：按钮存在且（配额已加载或条件行已渲染）。配额初载短暂显示 (0/0)，total>0 才算加载完成。 */
+async function waitForAiFormReady(page: Page, timeoutMs = AI_FORM_READY_TIMEOUT_MS): Promise<Frame> {
+  const start = Date.now();
+  let lastState: AiFormState | null = null;
+  while (Date.now() - start < timeoutMs) {
+    const frame = page.frames().find(isAiSearchFrame);
+    if (frame) {
+      const state = (await raceTimeout(frame.evaluate(AI_FORM_STATE_SCRIPT), 4_000)) as AiFormState | null;
+      if (state) {
+        lastState = state;
+        if (state.hasBtn && (state.total > 0 || state.rows > 0)) {
+          return frame;
+        }
+      }
+    }
+    await sleepRandom(500, 900);
+  }
+  throw new Error(
+    `AI 搜索页未就绪（${lastState ? JSON.stringify(lastState) : '未找到 searchAiIframe'}），请确认已登录并可访问 ${BOSS_CHAT_AI_SEARCH_PATH}。`,
   );
+}
+
+function currentAiSearchEncryptId(url: string): string {
+  try {
+    return new URL(url).searchParams.get('encryptId') ?? '';
+  } catch {
+    return '';
+  }
+}
+
+async function navigateToAiSearchPage(page: Page, encryptId: string | null): Promise<Frame> {
+  if (isBossChatAiFormUrl(page.url())) {
+    if (!encryptId || currentAiSearchEncryptId(page.url()) === encryptId) {
+      return waitForAiFormReady(page);
+    }
+  }
+  const url = encryptId
+    ? `${BOSS_CHAT_AI_SEARCH_URL}?encryptId=${encodeURIComponent(encryptId)}`
+    : BOSS_CHAT_AI_SEARCH_URL;
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+  } catch {
+    // 忙时 goto 可能超时，交给轮询判定
+  }
+  let r = await waitForBossTopPath(page, BOSS_CHAT_AI_SEARCH_PATH, 15_000);
+  if (!r.ok) {
+    // goto 被重定向时回退：搜索页 →「开启AI搜索」按钮（会带当前职位 encryptId 进入）
+    await clickBossSidebarMenuToPath(page, '搜索', '/web/chat/search');
+    const searchFrame = await findFrame(page, isPlainSearchFrame, 20_000);
+    if (!searchFrame) {
+      throw new Error('进入搜索页后未找到搜索 iframe（/web/frame/search/）。');
+    }
+    const clicked = await raceTimeout(
+      searchFrame.evaluate(`(() => {
+        const btn = document.querySelector(".btn-ai-common");
+        if (!(btn instanceof HTMLElement)) return false;
+        btn.scrollIntoView({ block: "center", inline: "nearest" });
+        btn.click();
+        return true;
+      })()`),
+      5_000,
+    );
+    if (clicked !== true) {
+      throw new Error('搜索页未找到「开启AI搜索」入口（.btn-ai-common）。');
+    }
+    r = await waitForBossTopPath(page, BOSS_CHAT_AI_SEARCH_PATH, 25_000);
+    if (!r.ok) {
+      throw new Error(`未能进入 AI 搜索页（当前停在 ${r.lastSeen ?? '未知页面'}）。`);
+    }
+  }
+  return waitForAiFormReady(page);
+}
+
+type JobRow = { id: string; title: string; status: string };
+
+const READ_JOB_ROWS_SCRIPT = `(() => {
+  const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
+  return Array.from(document.querySelectorAll(".job-jobInfo-warp")).map((el) => ({
+    id: norm(el.getAttribute("data-id")),
+    title: norm(el.querySelector(".job-title a")?.textContent),
+    status: norm(el.querySelector(".job-status-wrapper .status-box")?.textContent),
+  })).filter((j) => j.id && j.title);
+})()`;
+
+/** 经职位管理列表把岗位关键字解析成 encryptId（列表行 data-id 即 AI 搜索页的 encryptId）。 */
+async function resolveJobByKeyword(page: Page, keyword: string): Promise<JobRow> {
+  const kw = keyword.trim();
+  await clickBossSidebarMenuToPath(page, '职位管理', '/web/chat/job/list');
+  const start = Date.now();
+  let jobs: JobRow[] = [];
+  while (Date.now() - start < 25_000) {
+    for (const frame of page.frames()) {
+      try {
+        if (!frame.url().includes(JOB_LIST_FRAME_URL_PART) && frame !== page.mainFrame()) {
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      const rows = (await raceTimeout(frame.evaluate(READ_JOB_ROWS_SCRIPT), 4_000)) as JobRow[] | null;
+      if (Array.isArray(rows) && rows.length > 0) {
+        jobs = rows;
+        break;
+      }
+    }
+    if (jobs.length > 0) {
+      break;
+    }
+    await sleepRandom(400, 800);
+  }
+  if (jobs.length === 0) {
+    throw new Error('职位管理列表读取超时，无法解析岗位关键字。');
+  }
+  const exact = jobs.find((j) => j.title === kw);
+  if (exact) {
+    return exact;
+  }
+  const needle = kw.toLowerCase();
+  const fuzzy = jobs.filter((j) => j.title.toLowerCase().includes(needle));
+  if (fuzzy.length === 1) {
+    return fuzzy[0] as JobRow;
+  }
+  if (fuzzy.length > 1) {
+    const picks = fuzzy
+      .slice(0, 8)
+      .map((j, i) => `${i + 1}. ${j.title}`)
+      .join('｜');
+    throw new Error(`“${kw}”命中多个职位，请改用更精确名称。候选：${picks}`);
+  }
+  const available = jobs.slice(0, 10).map((j) => j.title).join('｜');
+  throw new Error(`未找到匹配岗位“${kw}”。可选职位：${available}`);
 }
 
 export async function ensureInDeepSearchPage(page: Page): Promise<void> {
   if (!isBossChatAiFormUrl(page.url())) {
-    throw new Error('当前不在深度搜索页（/web/chat/aiform），请先通过侧栏进入「深度搜索」。');
+    throw new Error(`当前不在深度搜索页（${BOSS_CHAT_AI_SEARCH_PATH}），请先通过「搜索 → 开启AI搜索」进入。`);
   }
   await waitForAiFormReady(page);
 }
 
-async function clickAddConditionInSection(page: Page, titleKeyword: string): Promise<void> {
-  const titleLiteral = JSON.stringify(titleKeyword);
-  const clicked = (await page.evaluate(`((titleKeyword) => {
-    const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
-    function findFormSectionByTitle(kw) {
-      const h3s = Array.from(document.querySelectorAll(".form-content .form-content-title-h3"));
-      const h3 = h3s.find((el) => norm(el.textContent).includes(kw));
-      return h3 ? h3.closest(".form-content") : null;
-    }
-    const section = findFormSectionByTitle(titleKeyword);
-    if (!section) return false;
-    const header = section.querySelector(".form-content-header");
-    const titleBtn = header?.querySelector(".form-content-title-btn");
-    if (!(titleBtn instanceof HTMLElement)) return false;
-    if (!norm(titleBtn.textContent).includes("添加条件")) return false;
-    titleBtn.scrollIntoView({ block: "center", inline: "nearest" });
-    titleBtn.click();
-    return true;
-  })(${titleLiteral})`)) as boolean;
-  if (!clicked) {
-    throw new Error(`未找到「${titleKeyword}」区域的「添加条件」。`);
-  }
-  await sleepRandom(280, 520);
-}
-
-/** 等待指定区块内第 idx 行已出现在 DOM 中（岗位切换等可能导致列表晚于表单壳渲染）。 */
-async function waitForRequirementRowPresent(
-  page: Page,
-  titleKeyword: string,
-  rowIndex: number,
-  timeoutMs = 5000,
-): Promise<boolean> {
-  try {
-    await page.waitForFunction(
-      (kw: string, idx: number) => {
-        function norm(v: string) {
-          return (v ?? '').replace(/\s+/g, ' ').trim();
-        }
-        const h3s = Array.from(document.querySelectorAll('.form-content .form-content-title-h3'));
-        const h3 = h3s.find((el) => norm(el.textContent ?? '').includes(kw));
-        const section = h3 ? h3.closest('.form-content') : null;
-        if (!section) return false;
-        const list = section.querySelector('.form-content-list');
-        if (!list) return false;
-        const items = list.querySelectorAll('.form-content-list-item');
-        if (idx < 0 || idx >= items.length) return false;
-        return !!items[idx].querySelector('.form-content-list-item-title');
-      },
-      { timeout: timeoutMs },
-      titleKeyword,
-      rowIndex,
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** 深度搜索条件行：Boss 用 `.form-content-word` 展示文案（挂载很快，超时不宜过长）。 */
-async function waitForFormContentWordInRow(
-  page: Page,
-  titleKeyword: string,
-  rowIndex: number,
-  timeoutMs = 1000,
-): Promise<boolean> {
-  try {
-    await page.waitForFunction(
-      (kw: string, idx: number) => {
-        function norm(v: string) {
-          return (v ?? '').replace(/\s+/g, ' ').trim();
-        }
-        const h3s = Array.from(document.querySelectorAll('.form-content .form-content-title-h3'));
-        const h3 = h3s.find((el) => norm(el.textContent ?? '').includes(kw));
-        const section = h3 ? h3.closest('.form-content') : null;
-        if (!section) return false;
-        const list = section.querySelector('.form-content-list');
-        if (!list) return false;
-        const items = list.querySelectorAll('.form-content-list-item');
-        if (idx < 0 || idx >= items.length) return false;
-        return !!items[idx].querySelector('.form-content-word');
-      },
-      { timeout: timeoutMs },
-      titleKeyword,
-      rowIndex,
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function normFormText(s: string): string {
-  return s.replace(/\s+/g, ' ').trim();
-}
-
-/** 校验用：优先读 `.auto-resize-textarea-wrapper` 内 textarea/input，再读其它 input、最后 `.form-content-word`。 */
-async function readRowRequirementShownText(
-  page: Page,
-  titleKeyword: string,
-  rowIndex: number,
-): Promise<string> {
-  return page.evaluate(
-    (kw: string, idx: number) => {
-      function norm(v: string) {
-        return (v ?? '').replace(/\s+/g, ' ').trim();
-      }
-      const h3s = Array.from(document.querySelectorAll('.form-content .form-content-title-h3'));
-      const h3 = h3s.find((el) => norm(el.textContent ?? '').includes(kw));
-      const section = h3 ? h3.closest('.form-content') : null;
-      if (!section) return '';
-      const list = section.querySelector('.form-content-list');
-      if (!list) return '';
-      const items = list.querySelectorAll('.form-content-list-item');
-      if (idx < 0 || idx >= items.length) return '';
-      const row = items[idx];
-      const wrap = row.querySelector('.auto-resize-textarea-wrapper');
-      if (wrap) {
-        const ta = wrap.querySelector('textarea, input');
-        if (ta instanceof HTMLTextAreaElement) {
-          return norm(ta.value);
-        }
-        if (ta instanceof HTMLInputElement && ta.type !== 'hidden') {
-          return norm(ta.value);
-        }
-      }
-      const scope = row.querySelector('.form-content-list-item-content') ?? row;
-      const inp = scope.querySelector('input, textarea');
-      if (inp instanceof HTMLInputElement && inp.type !== 'hidden') {
-        return norm(inp.value);
-      }
-      if (inp instanceof HTMLTextAreaElement) {
-        return norm(inp.value);
-      }
-      const word =
-        row.querySelector('.form-content-list-item-title .form-content-word') ||
-        row.querySelector('.form-content-word');
-      return norm(word?.textContent ?? '');
-    },
-    titleKeyword,
-    rowIndex,
-  );
-}
-
-/** 点击行内 `.form-content-list-item-content`，Boss 会在内部挂载 `.auto-resize-textarea-wrapper` + textarea。 */
-async function clickFormContentListItemContent(
-  page: Page,
-  titleKeyword: string,
-  rowIndex: number,
-): Promise<boolean> {
-  return page.evaluate(
-    (kw: string, idx: number) => {
-      function norm(v: string) {
-        return (v ?? '').replace(/\s+/g, ' ').trim();
-      }
-      const h3s = Array.from(document.querySelectorAll('.form-content .form-content-title-h3'));
-      const h3 = h3s.find((el) => norm(el.textContent ?? '').includes(kw));
-      const section = h3 ? h3.closest('.form-content') : null;
-      if (!section) return false;
-      const items = section.querySelectorAll('.form-content-list .form-content-list-item');
-      if (idx < 0 || idx >= items.length) return false;
-      const row = items[idx];
-      const content = row.querySelector('.form-content-list-item-content');
-      if (!(content instanceof HTMLElement)) return false;
-      content.scrollIntoView({ block: 'center', inline: 'nearest' });
-      content.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-      content.click();
-      return true;
-    },
-    titleKeyword,
-    rowIndex,
-  );
-}
-
-async function waitForAutoResizeTextareaInRow(
-  page: Page,
-  titleKeyword: string,
-  rowIndex: number,
-  timeoutMs = 1800,
-): Promise<boolean> {
-  try {
-    await page.waitForFunction(
-      (kw: string, idx: number) => {
-        function norm(v: string) {
-          return (v ?? '').replace(/\s+/g, ' ').trim();
-        }
-        const h3s = Array.from(document.querySelectorAll('.form-content .form-content-title-h3'));
-        const h3 = h3s.find((el) => norm(el.textContent ?? '').includes(kw));
-        const section = h3 ? h3.closest('.form-content') : null;
-        if (!section) return false;
-        const items = section.querySelectorAll('.form-content-list .form-content-list-item');
-        if (idx < 0 || idx >= items.length) return false;
-        const row = items[idx];
-        const wrap = row.querySelector('.auto-resize-textarea-wrapper');
-        if (!wrap) return false;
-        const ta = wrap.querySelector('textarea, input');
-        if (ta instanceof HTMLTextAreaElement) return true;
-        if (ta instanceof HTMLInputElement && ta.type !== 'hidden' && ta.type !== 'button' && ta.type !== 'submit') {
-          return true;
-        }
-        return false;
-      },
-      { timeout: timeoutMs },
-      titleKeyword,
-      rowIndex,
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function fillAutoResizeTextareaInRow(
-  page: Page,
-  titleKeyword: string,
-  rowIndex: number,
-  value: string,
-): Promise<boolean> {
-  return page.evaluate(
-    (kw: string, idx: number, v: string) => {
-      function norm(s: string) {
-        return (s ?? '').replace(/\s+/g, ' ').trim();
-      }
-      function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, val: string): void {
-        const tracker = (el as unknown as { _valueTracker?: { setValue: (x: string) => void } })._valueTracker;
-        if (tracker && typeof tracker.setValue === 'function') {
-          tracker.setValue('');
-        }
-        const proto =
-          el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-        const desc = Object.getOwnPropertyDescriptor(proto, 'value');
-        if (desc?.set) {
-          desc.set.call(el, val);
-        } else {
-          el.value = val;
-        }
-      }
-      const h3s = Array.from(document.querySelectorAll('.form-content .form-content-title-h3'));
-      const h3 = h3s.find((el) => norm(el.textContent ?? '').includes(kw));
-      const section = h3 ? h3.closest('.form-content') : null;
-      if (!section) return false;
-      const items = section.querySelectorAll('.form-content-list .form-content-list-item');
-      if (idx < 0 || idx >= items.length) return false;
-      const row = items[idx];
-      const wrap = row.querySelector('.auto-resize-textarea-wrapper');
-      if (!wrap) return false;
-      const el = wrap.querySelector('textarea, input');
-      if (!(el instanceof HTMLTextAreaElement) && !(el instanceof HTMLInputElement)) return false;
-      if (el instanceof HTMLInputElement && (el.type === 'hidden' || el.type === 'button' || el.type === 'submit')) {
-        return false;
-      }
-      el.focus();
-      setNativeValue(el, v);
-      el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: v }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-      const titleWrap = row.querySelector('.form-content-list-item-title');
-      titleWrap?.classList.remove('error');
-      el.blur();
-      return true;
-    },
-    titleKeyword,
-    rowIndex,
-    value,
-  );
-}
-
-/** 用视口坐标点击 `.form-content-word` 中心，确保焦点落在真实文案节点上（比 programatic focus 更稳）。 */
-async function clickFormContentWordCenter(page: Page, titleKeyword: string, rowIndex: number): Promise<boolean> {
-  const pos = await page.evaluate(
-    (kw: string, idx: number) => {
-      function norm(v: string) {
-        return (v ?? '').replace(/\s+/g, ' ').trim();
-      }
-      const h3s = Array.from(document.querySelectorAll('.form-content .form-content-title-h3'));
-      const h3 = h3s.find((el) => norm(el.textContent ?? '').includes(kw));
-      const section = h3 ? h3.closest('.form-content') : null;
-      if (!section) return null;
-      const list = section.querySelector('.form-content-list');
-      if (!list) return null;
-      const items = list.querySelectorAll('.form-content-list-item');
-      if (idx < 0 || idx >= items.length) return null;
-      const row = items[idx];
-      const word =
-        row.querySelector('.form-content-list-item-title .form-content-word') ||
-        row.querySelector('.form-content-word');
-      if (!(word instanceof HTMLElement)) return null;
-      word.scrollIntoView({ block: 'center', inline: 'nearest' });
-      const r = word.getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-    },
-    titleKeyword,
-    rowIndex,
-  );
-  if (!pos || !(pos.x > 0 && pos.y > 0)) {
-    return false;
-  }
-  await page.mouse.click(pos.x, pos.y);
-  return true;
-}
-
-async function tryFillRowViaDomEvaluate(
-  page: Page,
-  titleKeyword: string,
-  rowIndex: number,
-  value: string,
-): Promise<boolean> {
-  return page.evaluate(
-    (kw: string, idx: number, v: string) => {
-      function norm(s: string) {
-        return (s ?? '').replace(/\s+/g, ' ').trim();
-      }
-      const h3s = Array.from(document.querySelectorAll('.form-content .form-content-title-h3'));
-      const h3 = h3s.find((el) => norm(el.textContent ?? '').includes(kw));
-      const section = h3 ? h3.closest('.form-content') : null;
-      if (!section) return false;
-      const list = section.querySelector('.form-content-list');
-      if (!list) return false;
-      const items = list.querySelectorAll('.form-content-list-item');
-      const row = items[idx];
-      if (!row) return false;
-      row.scrollIntoView({ block: 'center', inline: 'nearest' });
-
-      const scope = row.querySelector('.form-content-list-item-content') ?? row;
-      function walkInput(root: Element | ShadowRoot): HTMLInputElement | HTMLTextAreaElement | null {
-        const direct = root.querySelectorAll('input, textarea');
-        for (let i = 0; i < direct.length; i++) {
-          const el = direct[i];
-          if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-            if (el.type === 'hidden' || el.type === 'submit' || el.type === 'button') continue;
-            return el;
-          }
-        }
-        for (const el of Array.from(root.querySelectorAll('*'))) {
-          if (el.shadowRoot) {
-            const f = walkInput(el.shadowRoot);
-            if (f) return f;
-          }
-        }
-        return null;
-      }
-      const inp = walkInput(scope);
-      if (inp) {
-        const tracker = (inp as unknown as { _valueTracker?: { setValue: (x: string) => void } })._valueTracker;
-        if (tracker && typeof tracker.setValue === 'function') tracker.setValue('');
-        const proto =
-          inp instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-        const desc = Object.getOwnPropertyDescriptor(proto, 'value');
-        if (desc?.set) desc.set.call(inp, v);
-        else inp.value = v;
-        inp.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: v }));
-        inp.dispatchEvent(new Event('change', { bubbles: true }));
-        return true;
-      }
-
-      const word =
-        row.querySelector('.form-content-list-item-title .form-content-word') ||
-        row.querySelector('.form-content-word');
-      if (word instanceof HTMLElement) {
-        word.focus();
-        word.click();
-        try {
-          document.execCommand('selectAll', false);
-          document.execCommand('insertText', false, v);
-        } catch {
-          /* 由外层 CDP/键盘兜底 */
-        }
-        return true;
-      }
-      return false;
-    },
-    titleKeyword,
-    rowIndex,
-    value,
-  );
-}
-
-/** 必须与目标文案一致（规范化空白后）；不用 includes，避免整段终端/回显误匹配。 */
-function wordTextMatchesExpected(shown: string, expected: string): boolean {
-  return normFormText(shown) === normFormText(expected);
-}
-
-/**
- * 直接改 DOM：文案在 `.form-content-list-item-title` > `.form-content-word` 内，无原生 input。
- * 同步写 inner 文本并向外层派发 input/change，并尝试去掉 error 态 class。
- */
-async function setFormContentWordDirect(
-  page: Page,
-  titleKeyword: string,
-  rowIndex: number,
-  value: string,
-): Promise<boolean> {
-  return page.evaluate(
-    (kw: string, idx: number, v: string) => {
-      function norm(s: string) {
-        return (s ?? '').replace(/\s+/g, ' ').trim();
-      }
-      const h3s = Array.from(document.querySelectorAll('.form-content .form-content-title-h3'));
-      const h3 = h3s.find((el) => norm(el.textContent ?? '').includes(kw));
-      const section = h3 ? h3.closest('.form-content') : null;
-      if (!section) return false;
-      const list = section.querySelector('.form-content-list');
-      if (!list) return false;
-      const items = list.querySelectorAll('.form-content-list-item');
-      if (idx < 0 || idx >= items.length) return false;
-      const row = items[idx];
-      const titleWrap = row.querySelector('.form-content-list-item-title');
-      let word =
-        row.querySelector('.form-content-list-item-title .form-content-word') ||
-        row.querySelector('.form-content-word');
-      if (!(word instanceof HTMLElement)) {
-        if (titleWrap instanceof HTMLElement) {
-          word = document.createElement('div');
-          word.className = 'form-content-word';
-          titleWrap.appendChild(word);
-        } else {
-          return false;
-        }
-      }
-      word.textContent = v;
-      if (titleWrap instanceof HTMLElement) {
-        titleWrap.classList.remove('error');
-      }
-      function fire(el: Element): void {
-        try {
-          el.dispatchEvent(
-            new InputEvent('input', { bubbles: true, composed: true, data: v, inputType: 'insertText' }),
-          );
-        } catch {
-          el.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-      fire(word);
-      if (titleWrap instanceof HTMLElement) {
-        fire(titleWrap);
-      }
-      return true;
-    },
-    titleKeyword,
-    rowIndex,
-    value,
-  );
-}
-
-/**
- * 在区块内按行下标写入一条条件（有内容则直接覆盖）。
- * Boss：先点 `.form-content-list-item-content`，再填 `.auto-resize-textarea-wrapper` 内 textarea；失败再改 word div / 键盘。
- */
-async function fillRowAtIndexInSection(
-  page: Page,
-  titleKeyword: string,
-  rowIndex: number,
-  text: string,
-): Promise<boolean> {
-  const rowPresent = await waitForRequirementRowPresent(page, titleKeyword, rowIndex);
-  if (!rowPresent) {
-    return false;
-  }
-
-  const contentClicked = await clickFormContentListItemContent(page, titleKeyword, rowIndex);
-  let clickedIndex = rowIndex;
-  if (!contentClicked) {
-    clickedIndex = await page.evaluate(
-      (kw: string, idx: number) => {
-        function norm(v: string) {
-          return (v ?? '').replace(/\s+/g, ' ').trim();
-        }
-        function findFormSectionByTitle(keyword: string): HTMLElement | null {
-          const h3s = Array.from(document.querySelectorAll('.form-content .form-content-title-h3'));
-          const h3 = h3s.find((el) => norm(el.textContent ?? '').includes(keyword));
-          const section = h3 ? h3.closest('.form-content') : null;
-          if (!section?.querySelector('.form-content-list')) {
-            return null;
-          }
-          return section as HTMLElement;
-        }
-        const section = findFormSectionByTitle(kw);
-        if (!section) return -1;
-        const list = section.querySelector('.form-content-list');
-        if (!list) return -1;
-        const items = list.querySelectorAll('.form-content-list-item');
-        if (idx < 0 || idx >= items.length) return -1;
-        const row = items[idx];
-        const titleEl = row.querySelector('.form-content-list-item-title');
-        if (!(titleEl instanceof HTMLElement)) return -1;
-        titleEl.scrollIntoView({ block: 'center', inline: 'nearest' });
-        titleEl.dispatchEvent(
-          new MouseEvent('click', { bubbles: true, cancelable: true, view: window }),
-        );
-        titleEl.click();
-        return idx;
-      },
-      titleKeyword,
-      rowIndex,
-    );
-    if (clickedIndex < 0) {
-      return false;
-    }
-  }
-
-  await sleepRandom(120, 280);
-
-  const tryVerify = async (): Promise<boolean> => {
-    await sleepRandom(40, 100);
-    const shown = await readRowRequirementShownText(page, titleKeyword, clickedIndex);
-    return wordTextMatchesExpected(shown, text);
-  };
-
-  let hasAutoResize = await waitForAutoResizeTextareaInRow(page, titleKeyword, clickedIndex, 1800);
-  if (!hasAutoResize && contentClicked) {
-    await clickFormContentListItemContent(page, titleKeyword, clickedIndex);
-    await sleepRandom(80, 160);
-    hasAutoResize = await waitForAutoResizeTextareaInRow(page, titleKeyword, clickedIndex, 1200);
-  }
-  if (hasAutoResize) {
-    await fillAutoResizeTextareaInRow(page, titleKeyword, clickedIndex, text);
-    if (await tryVerify()) {
-      await page.keyboard.press('Tab').catch(() => {});
-      return true;
-    }
-    await page.evaluate(
-      (kw: string, idx: number) => {
-        function norm(v: string) {
-          return (v ?? '').replace(/\s+/g, ' ').trim();
-        }
-        const h3s = Array.from(document.querySelectorAll('.form-content .form-content-title-h3'));
-        const h3 = h3s.find((el) => norm(el.textContent ?? '').includes(kw));
-        const section = h3 ? h3.closest('.form-content') : null;
-        if (!section) return;
-        const items = section.querySelectorAll('.form-content-list .form-content-list-item');
-        const row = items[idx];
-        const wrap = row?.querySelector('.auto-resize-textarea-wrapper');
-        const ta = wrap?.querySelector('textarea, input');
-        if (ta instanceof HTMLElement) {
-          ta.focus();
-          ta.click();
-        }
-      },
-      titleKeyword,
-      clickedIndex,
-    );
-    await sleepRandom(50, 120);
-    await fillAutoResizeTextareaInRow(page, titleKeyword, clickedIndex, text);
-    if (await tryVerify()) {
-      await page.keyboard.press('Tab').catch(() => {});
-      return true;
-    }
-  }
-
-  let hasWord = await waitForFormContentWordInRow(page, titleKeyword, clickedIndex, 2000);
-  if (!hasWord) {
-    await page.evaluate(
-      (kw: string, idx: number) => {
-        function norm(v: string) {
-          return (v ?? '').replace(/\s+/g, ' ').trim();
-        }
-        const h3s = Array.from(document.querySelectorAll('.form-content .form-content-title-h3'));
-        const h3 = h3s.find((el) => norm(el.textContent ?? '').includes(kw));
-        const section = h3 ? h3.closest('.form-content') : null;
-        if (!section) return;
-        const list = section.querySelector('.form-content-list');
-        if (!list) return;
-        const items = list.querySelectorAll('.form-content-list-item');
-        const row = items[idx];
-        const titleEl = row?.querySelector('.form-content-list-item-title');
-        if (titleEl instanceof HTMLElement) {
-          titleEl.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window }));
-          titleEl.click();
-        }
-      },
-      titleKeyword,
-      clickedIndex,
-    );
-    await sleepRandom(120, 240);
-    hasWord = await waitForFormContentWordInRow(page, titleKeyword, clickedIndex, 1200);
-  }
-
-  if (await setFormContentWordDirect(page, titleKeyword, clickedIndex, text)) {
-    if (await tryVerify()) {
-      await page.keyboard.press('Tab').catch(() => {});
-      return true;
-    }
-  }
-
-  await page.evaluate(
-    () =>
-      new Promise<void>((resolve) => {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => resolve());
-        });
-      }),
-  );
-  if (await setFormContentWordDirect(page, titleKeyword, clickedIndex, text)) {
-    if (await tryVerify()) {
-      await page.keyboard.press('Tab').catch(() => {});
-      return true;
-    }
-  }
-
-  await tryFillRowViaDomEvaluate(page, titleKeyword, clickedIndex, text);
-  if (await tryVerify()) {
-    await page.keyboard.press('Tab').catch(() => {});
-    return true;
-  }
-
-  if (hasWord) {
-    await clickFormContentWordCenter(page, titleKeyword, clickedIndex);
-    await sleepRandom(60, 120);
-    await page.evaluate(
-      (kw: string, idx: number) => {
-        function norm(v: string) {
-          return (v ?? '').replace(/\s+/g, ' ').trim();
-        }
-        const h3s = Array.from(document.querySelectorAll('.form-content .form-content-title-h3'));
-        const h3 = h3s.find((el) => norm(el.textContent ?? '').includes(kw));
-        const section = h3 ? h3.closest('.form-content') : null;
-        if (!section) return;
-        const items = section.querySelectorAll('.form-content-list .form-content-list-item');
-        const row = items[idx];
-        const word =
-          row?.querySelector('.form-content-list-item-title .form-content-word') ||
-          row?.querySelector('.form-content-word');
-        if (word instanceof HTMLElement) {
-          word.focus();
-        }
-      },
-      titleKeyword,
-      clickedIndex,
-    );
-  } else {
-    await page.evaluate(
-      (kw: string, idx: number) => {
-        function norm(v: string) {
-          return (v ?? '').replace(/\s+/g, ' ').trim();
-        }
-        const h3s = Array.from(document.querySelectorAll('.form-content .form-content-title-h3'));
-        const h3 = h3s.find((el) => norm(el.textContent ?? '').includes(kw));
-        const section = h3 ? h3.closest('.form-content') : null;
-        if (!section) return;
-        const items = section.querySelectorAll('.form-content-list .form-content-list-item');
-        const row = items[idx];
-        const titleEl = row?.querySelector('.form-content-list-item-title');
-        if (titleEl instanceof HTMLElement) {
-          titleEl.scrollIntoView({ block: 'center', inline: 'nearest' });
-          titleEl.focus();
-          titleEl.click();
-        }
-      },
-      titleKeyword,
-      clickedIndex,
-    );
-    await sleepRandom(60, 100);
-  }
-
-  const selectAllMod = selectAllModifierKey();
-  await page.keyboard.down(selectAllMod);
-  await page.keyboard.press('KeyA');
-  await page.keyboard.up(selectAllMod);
-  await sleepRandom(40, 80);
-  await page.keyboard.type(text, { delay: 12 });
-  await page.keyboard.press('Tab');
-  await sleepRandom(50, 100);
-
-  if (await tryVerify()) {
-    return true;
-  }
-
-  return false;
-}
-
-/**
- * 每条条件按顺序对应第 0、1、2… 行：有行则覆盖内容；行不够则点「添加条件」再填。
- */
-async function applyLinesToSection(page: Page, titleKeyword: string, lines: string[]): Promise<void> {
-  let processed = 0;
-  let nextRowIndex = 0;
-  for (const raw of lines) {
-    const text = raw.trim();
-    if (!text) {
-      continue;
-    }
-    let ok = await fillRowAtIndexInSection(page, titleKeyword, nextRowIndex, text);
-    if (!ok) {
-      await clickAddConditionInSection(page, titleKeyword);
-      ok = await fillRowAtIndexInSection(page, titleKeyword, nextRowIndex, text);
-    }
-    if (!ok) {
-      throw new Error(
-        `「${titleKeyword}」第 ${processed + 1} 条条件无法填入（该区块无可用行或「添加条件」后仍失败）。`,
-      );
-    }
-    processed += 1;
-    nextRowIndex += 1;
-  }
-}
-
-async function applyAiFormRequirementLists(
-  page: Page,
-  opts: { core?: string[]; bonus?: string[] },
-): Promise<void> {
-  if (opts.core !== undefined) {
-    await applyLinesToSection(page, '核心要求', opts.core);
-  }
-  if (opts.bonus !== undefined) {
-    await applyLinesToSection(page, '加分项', opts.bonus);
-  }
-}
-
-async function readSearchFormSnapshot(page: Page): Promise<SearchFormSnapshot> {
-  return (await page.evaluate(`(() => {
-    const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
-    function itemLineText(item) {
-      const word = item.querySelector(".form-content-word");
-      const w = word ? norm(word.textContent) : "";
-      if (w) return w;
-      const inp = item.querySelector("input, textarea");
-      if (inp && norm(inp.value)) return norm(inp.value);
-      const ce = item.querySelector("[contenteditable='true']");
-      if (ce) return norm(ce.textContent);
-      const titleEl = item.querySelector(".form-content-list-item-title");
-      if (titleEl) return norm(titleEl.textContent);
-      return "";
-    }
-    const selectedJob = norm(document.querySelector(".job-dropmenu-select .job-main-text")?.textContent);
-    const sections = Array.from(document.querySelectorAll(".form-content"));
-    const coreRequirements = [];
-    const bonusRequirements = [];
-    for (const section of sections) {
-      const title = norm(section.querySelector(".form-content-header .form-content-title-h3")?.textContent);
-      const items = section.querySelectorAll(".form-content-list-item");
-      const words = Array.from(items)
-        .map((item) => itemLineText(item))
-        .filter(Boolean);
-      if (title.includes("核心要求")) {
-        coreRequirements.push(...words);
-        continue;
-      }
-      if (title.includes("加分项")) {
-        bonusRequirements.push(...words);
-      }
-    }
-    const remainingCountText = norm(document.querySelector(".ai-form-match-footer-text-count")?.textContent);
-    return {
-      selectedJob,
-      coreRequirements,
-      bonusRequirements,
-      remainingCountText,
-    };
-  })()`)) as SearchFormSnapshot;
-}
-
-async function waitForAiFormJobDropdownReady(page: Page): Promise<void> {
-  await page.waitForFunction(
-    `(() => {
-      const input = Array.from(
-        document.querySelectorAll(
-          ".ui-dropmenu-list input[type='text'], .ui-dropmenu-list input, .job-dropmenu-options .chat-job-search, .job-dropmenu-popover .chat-job-search, .top-chat-search .chat-job-search, input.chat-job-search",
-        ),
-      ).find((el) => {
-        if (!(el instanceof HTMLInputElement)) return false;
-        const rect = el.getBoundingClientRect();
-        const style = window.getComputedStyle(el);
-        return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
-      });
-      return !!input;
-    })()`,
-    { timeout: 8_000 },
-  );
-}
-
-async function waitForAiFormJobSearchResults(page: Page, keyword: string): Promise<void> {
-  await page.waitForFunction(
-    `((kw) => {
-      const norm = (v) => (v ?? "").replace(/\\s+/g, "").trim().toLowerCase();
-      const rows = Array.from(
-        document.querySelectorAll(
-          ".job-dropmenu-list .job-dropmenu-item, .job-dropmenu-options .job-list .job-item, .job-dropmenu-popover .job-list .job-item, .job-dropmenu-options .job-item",
-        ),
-      );
-      if (rows.length === 0) return false;
-      return rows.some((el) => {
-        const label = norm(el.querySelector(".job-option-text, .label")?.textContent || el.textContent || "");
-        return label.includes(norm(kw));
-      });
-    })`,
-    { timeout: 10_000 },
-    keyword,
-  );
-}
-
-async function waitForAiFormJobSelected(page: Page, expectedLabel: string): Promise<void> {
-  await page.waitForFunction(
-    `((label) => {
-      const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
-      const selected = norm(document.querySelector(".job-dropmenu-select .job-main-text")?.textContent);
-      return !!selected && selected === label;
-    })`,
-    { timeout: 10_000 },
-    expectedLabel,
-  );
-  await ensureInDeepSearchPage(page);
-}
-
+/** 切换 AI 搜索页岗位：解析 encryptId 后直达（会经过职位管理列表，页面会跳转）。 */
 export async function selectAiFormJob(page: Page, keyword: string): Promise<string> {
   const kw = keyword.trim();
   if (!kw) {
     throw new Error('岗位关键字不能为空。');
   }
-  const kwLiteral = JSON.stringify(kw);
-
-  const opened = (await page.evaluate(`(() => {
-    const host = document.querySelector(".job-dropmenu-select");
-    if (!(host instanceof HTMLElement)) return false;
-    host.scrollIntoView({ block: "center", inline: "nearest" });
-    host.click();
-    return true;
-  })()`)) as boolean;
-  if (!opened) {
-    throw new Error('未找到深度搜索页岗位下拉（.job-dropmenu-select）。');
-  }
-  await sleepRandom(JOB_SELECT_ACTION_GAP_MS.min, JOB_SELECT_ACTION_GAP_MS.max);
-  await waitForAiFormJobDropdownReady(page);
-
-  const searched = (await page.evaluate(`(() => {
-    const kw = ${kwLiteral};
-    const inputs = Array.from(
-      document.querySelectorAll(
-        ".ui-dropmenu-list input[type='text'], .ui-dropmenu-list input, .job-dropmenu-options .chat-job-search, .job-dropmenu-popover .chat-job-search, .top-chat-search .chat-job-search, input.chat-job-search",
-      ),
-    );
-    const input = inputs.find((el) => {
-      if (!(el instanceof HTMLInputElement)) return false;
-      const r = el.getBoundingClientRect();
-      return r.width > 0 && r.height > 0;
-    });
-    if (!input) return false;
-    input.focus();
-    input.value = kw;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-    return true;
-  })()`)) as boolean;
-  if (searched) {
-    await sleepRandom(JOB_SEARCH_ACTION_GAP_MS.min, JOB_SEARCH_ACTION_GAP_MS.max);
-    await waitForAiFormJobSearchResults(page, kw);
-  }
-
-  const picked = (await page.evaluate(`(() => {
-    const kw = ${kwLiteral};
-    const norm = (v) => (v ?? "").replace(/\\s+/g, "").trim().toLowerCase();
-    const rows = Array.from(
-      document.querySelectorAll(
-        ".job-dropmenu-list .job-dropmenu-item, .job-dropmenu-options .job-list .job-item, .job-dropmenu-popover .job-list .job-item, .job-dropmenu-options .job-item",
-      ),
-    );
-    if (rows.length === 0) return { ok: false, reason: "empty" };
-    const target = rows.find((el) => {
-      const label = norm(
-        el.querySelector(".job-option-text, .label")?.textContent || el.textContent || "",
-      );
-      return label.includes(norm(kw));
-    });
-    if (!(target instanceof HTMLElement)) return { ok: false, reason: "not_found" };
-    const label = (
-      target.querySelector(".job-option-text, .label")?.textContent ?? target.textContent ?? ""
-    )
-      .replace(/\\s+/g, " ")
-      .trim();
-    target.scrollIntoView({ block: "center", inline: "nearest" });
-    target.click();
-    return { ok: true, label };
-  })()`)) as { ok: boolean; label?: string; reason?: string };
-  if (!picked.ok) {
-    throw new Error(`未找到匹配岗位「${kw}」。`);
-  }
-  const label = picked.label ?? kw;
-  await sleepRandom(JOB_SELECT_ACTION_GAP_MS.min, JOB_SELECT_ACTION_GAP_MS.max);
-  await waitForAiFormJobSelected(page, label);
-  return label;
+  const job = await resolveJobByKeyword(page, kw);
+  await navigateToAiSearchPage(page, job.id);
+  return job.title;
 }
 
-/** 深度搜索页当前选中的岗位文案（无则「默认」） */
+/** AI 搜索页当前选中的岗位文案（职位 pill，如「3D角色建模师·深圳·本科·3-5年·15-25K·14薪」；无则「默认」） */
 export async function readAiFormSelectedJobLabel(page: Page): Promise<string> {
-  return (await page.evaluate(`(() => {
-    const t = (document.querySelector(".job-dropmenu-select .job-main-text")?.textContent ?? "")
-      .replace(/\\s+/g, " ")
-      .trim();
-    return t.length > 0 ? t : "默认";
-  })()`)) as string;
+  const frame = page.frames().find(isAiSearchFrame);
+  if (!frame) {
+    return '默认';
+  }
+  const label = await raceTimeout(
+    frame.evaluate(`(() => {
+      const el = document.querySelector(".search-condition input.ipt, input.ipt");
+      const v = el && "value" in el ? String(el.value ?? "") : "";
+      return v.replace(/\\s+/g, " ").trim();
+    })()`),
+    4_000,
+  );
+  return typeof label === 'string' && label.length > 0 ? label : '默认';
 }
 
 /**
- * 在深度搜索（aiform）主文档中按姓名打开在线简历预览（与 {@link clickGreetDeepSearch} 同一卡片集合，排除「继续沟通」）。
+ * 在 AI 搜索页按姓名打开在线简历预览（与 {@link clickGreetDeepSearch} 同一卡片集合，排除「继续沟通」）。
  */
 export async function openDeepSearchResumePreview(page: Page, target: string): Promise<boolean> {
+  const frame = page.frames().find(isAiSearchFrame);
+  if (!frame) {
+    return false;
+  }
   const raw = target.trim();
   const targetLiteral = JSON.stringify(raw);
-  const opened = (await page.evaluate(`(() => {
+  const opened = (await frame.evaluate(`(() => {
     const raw = ${targetLiteral};
     const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
     const allCards = Array.from(
@@ -1022,7 +344,11 @@ export async function openDeepSearchResumePreview(page: Page, target: string): P
 }
 
 export async function readDeepSearchGeekList(page: Page): Promise<DeepSearchGeekItem[]> {
-  return (await page.evaluate(`(() => {
+  const frame = page.frames().find(isAiSearchFrame);
+  if (!frame) {
+    return [];
+  }
+  return (await frame.evaluate(`(() => {
     const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
     const items = Array.from(
       document.querySelectorAll(".geeks-box .geek-card-item, .geek-card-list .geek-card-item"),
@@ -1047,7 +373,7 @@ export async function readDeepSearchGeekList(page: Page): Promise<DeepSearchGeek
         }
         return { name, meta, work, edu, reason };
       })
-      .filter((x) => x !== null);
+      .filter((x) => x !== null && x.name);
   })()`)) as DeepSearchGeekItem[];
 }
 
@@ -1073,10 +399,22 @@ export function renderGeekListSection(title: string, items: DeepSearchGeekItem[]
   return lines.join('\n').trimEnd();
 }
 
+type GreetClickResult =
+  | { kind: 'empty' }
+  | { kind: 'all_continue' }
+  | { kind: 'not_found'; target: string }
+  | { kind: 'no_btn'; name: string }
+  | { kind: 'not_greet'; name: string; label: string }
+  | { kind: 'disabled'; name: string }
+  | { kind: 'clicked'; name: string };
+
 export async function clickGreetDeepSearch(page: Page, target: string): Promise<{ message: string }> {
+  const frame = page.frames().find(isAiSearchFrame);
+  if (!frame) {
+    throw new Error('未找到 AI 搜索 iframe，无法打招呼。');
+  }
   const targetLiteral = JSON.stringify(target.trim());
-  const result = (await page.evaluate(
-    `(() => {
+  const result = (await frame.evaluate(`(() => {
       const raw = ${targetLiteral};
       const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
       const allCards = Array.from(
@@ -1121,19 +459,10 @@ export async function clickGreetDeepSearch(page: Page, target: string): Promise<
       btn.scrollIntoView({ block: "center", inline: "nearest" });
       btn.click();
       return { kind: "clicked", name };
-    })()`,
-  )) as
-    | { kind: 'empty' }
-    | { kind: 'all_continue' }
-    | { kind: 'not_found'; target: string }
-    | { kind: 'no_btn'; name: string }
-    | { kind: 'not_greet'; name: string; label: string }
-    | { kind: 'disabled'; name: string }
-    | { kind: 'clicked'; name: string };
-
+    })()`)) as GreetClickResult;
   switch (result.kind) {
     case 'empty':
-      throw new Error('深度搜索暂无候选人列表，请先在页面点击「立即匹配」后再试。');
+      throw new Error('深度搜索暂无候选人列表，请先在页面点击「深度搜索」按钮生成匹配后再试。');
     case 'all_continue':
       throw new Error('当前列表均为「继续沟通」状态，已无待打招呼人选（与 boss deep-search 列表展示一致）。');
     case 'not_found':
@@ -1155,17 +484,122 @@ export async function clickGreetDeepSearch(page: Page, target: string): Promise<
   }
 }
 
-function renderFormSnapshotOnly(snap: SearchFormSnapshot): string {
-  const core = snap.coreRequirements.length > 0 ? snap.coreRequirements.join('｜') : '（空）';
-  const bonus = snap.bonusRequirements.length > 0 ? snap.bonusRequirements.join('｜') : '（空）';
-  return [
-    '已更新深度搜索表单（未触发「立即匹配」）。',
+const READ_SNAPSHOT_SCRIPT = `(() => {
+  const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
+  const pill = document.querySelector(".search-condition input.ipt, input.ipt");
+  const selectedJob = pill && "value" in pill ? norm(String(pill.value ?? "")) : "";
+  const requirements = Array.from(document.querySelectorAll(".prompt-list input.prompt-input-field"))
+    .map((el) => norm(el.value))
+    .filter(Boolean);
+  const btn = document.querySelector(".btn-ai-match-v2");
+  const btnText = btn ? norm(btn.textContent) : "";
+  const m = btnText.match(/\\((\\d+)\\s*\\/\\s*(\\d+)\\)/);
+  return {
+    selectedJob,
+    requirements,
+    remainingCountText: m ? m[1] + "/" + m[2] : "",
+  };
+})()`;
+
+async function readSearchFormSnapshot(page: Page): Promise<SearchFormSnapshot> {
+  const frame = await waitForAiFormReady(page);
+  return (await frame.evaluate(READ_SNAPSHOT_SCRIPT)) as SearchFormSnapshot;
+}
+
+/**
+ * 把条件写入「定制要求」列表（老版核心要求/加分项已合并为这一个列表，按 core、bonus 顺序拼接）。
+ * 逐行覆盖，行不够时点「添加更多要求」（button.prompt-add）。单条上限 50 字（Boss 输入框 maxlength）。
+ * 返回被截断的原始条目（超长告知调用方）。
+ */
+async function applyAiFormRequirementLists(
+  page: Page,
+  opts: { core?: string[]; bonus?: string[] },
+): Promise<string[]> {
+  const merged = [...(opts.core ?? []), ...(opts.bonus ?? [])].map((s) => s.trim()).filter(Boolean);
+  const truncated: string[] = [];
+  if (merged.length === 0) {
+    return truncated;
+  }
+  const frame = await waitForAiFormReady(page);
+  for (let i = 0; i < merged.length; i++) {
+    let text = merged[i] as string;
+    if (text.length > PROMPT_INPUT_MAX_LEN) {
+      truncated.push(text);
+      text = text.slice(0, PROMPT_INPUT_MAX_LEN);
+    }
+    let rows = (await frame.evaluate(
+      `document.querySelectorAll(".prompt-list input.prompt-input-field").length`,
+    )) as number;
+    if (i >= rows) {
+      const added = (await frame.evaluate(`(() => {
+        const btn = document.querySelector(".prompt-list button.prompt-add, button.prompt-add");
+        if (!(btn instanceof HTMLElement)) return false;
+        btn.scrollIntoView({ block: "center", inline: "nearest" });
+        btn.click();
+        return true;
+      })()`)) as boolean;
+      if (!added) {
+        throw new Error(`定制要求第 ${i + 1} 条：未找到「添加更多要求」按钮（button.prompt-add），无法加行。`);
+      }
+      await sleepRandom(300, 600);
+      rows = (await frame.evaluate(
+        `document.querySelectorAll(".prompt-list input.prompt-input-field").length`,
+      )) as number;
+      if (i >= rows) {
+        throw new Error(`定制要求第 ${i + 1} 条：点击「添加更多要求」后仍无可用输入行。`);
+      }
+    }
+    const fillOnce = async (): Promise<void> => {
+      await frame.evaluate(`((idx, v) => {
+        const fields = document.querySelectorAll(".prompt-list input.prompt-input-field");
+        const el = fields[idx];
+        if (!(el instanceof HTMLInputElement)) return false;
+        el.scrollIntoView({ block: "center", inline: "nearest" });
+        el.focus();
+        const tracker = el._valueTracker;
+        if (tracker && typeof tracker.setValue === "function") tracker.setValue("");
+        const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+        if (desc && desc.set) desc.set.call(el, v); else el.value = v;
+        el.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, data: v }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        el.blur();
+        return true;
+      })(${i}, ${JSON.stringify(text)})`);
+    };
+    const verify = async (): Promise<boolean> => {
+      const shown = (await frame.evaluate(`((idx) => {
+        const fields = document.querySelectorAll(".prompt-list input.prompt-input-field");
+        const el = fields[idx];
+        return el ? String(el.value ?? "").replace(/\\s+/g, " ").trim() : "";
+      })(${i})`)) as string;
+      return shown === text.replace(/\s+/g, ' ').trim();
+    };
+    await fillOnce();
+    await sleepRandom(120, 260);
+    if (!(await verify())) {
+      await fillOnce();
+      await sleepRandom(120, 260);
+      if (!(await verify())) {
+        throw new Error(`定制要求第 ${i + 1} 条写入失败（内容未生效）。`);
+      }
+    }
+  }
+  return truncated;
+}
+
+function renderFormSnapshotOnly(snap: SearchFormSnapshot, truncated: string[]): string {
+  const reqs = snap.requirements.length > 0 ? snap.requirements.join('｜') : '（空）';
+  const lines = [
+    '已更新深度搜索条件（未点击「深度搜索」按钮，不消耗当日次数）。',
     `职位：${snap.selectedJob || '未知职位'}`,
-    `核心要求(${snap.coreRequirements.length})：${core}`,
-    `加分项(${snap.bonusRequirements.length})：${bonus}`,
-    `今日匹配剩余：${snap.remainingCountText || '未知'}`,
-    `来源页面：${BOSS_CHAT_AI_FORM_URL}`,
-  ].join('\n');
+    `定制要求(${snap.requirements.length})：${reqs}`,
+    `今日深度搜索剩余：${snap.remainingCountText || '未知'}`,
+    `来源页面：${BOSS_CHAT_AI_SEARCH_URL}`,
+  ];
+  if (truncated.length > 0) {
+    lines.push(`注意：${truncated.length} 条要求超过 ${PROMPT_INPUT_MAX_LEN} 字已截断（Boss 输入框上限）。`);
+  }
+  return lines.join('\n');
 }
 
 export async function runBossSearchSet(opts: {
@@ -1180,36 +614,22 @@ export async function runBossSearchSet(opts: {
   if (!jobKeyword && !hasFormEdit) {
     throw new Error('请至少指定 --job/-j、--core/-c 或 --bonus/-b 之一。');
   }
-
   try {
     return await withBossSessionPage(async (page) => {
-      const currentUrl = page.url();
-      if (!isBossChatAiFormUrl(currentUrl)) {
-        await clickBossSidebarMenuToPath(page, '深度搜索', '/web/chat/aiform');
-      }
-      if (!isBossChatAiFormUrl(page.url())) {
-        throw new Error('通过侧边栏“深度搜索”进入页面失败，请确认已登录并可访问 /web/chat/aiform。');
-      }
-      await ensureInDeepSearchPage(page);
-
       if (jobKeyword) {
         await selectAiFormJob(page, jobKeyword);
-        await ensureInDeepSearchPage(page);
-        if (hasFormEdit) {
-          await ensureInDeepSearchPage(page);
-        }
+      } else {
+        await navigateToAiSearchPage(page, null);
       }
-
+      let truncated: string[] = [];
       if (hasFormEdit) {
-        await applyAiFormRequirementLists(page, {
+        truncated = await applyAiFormRequirementLists(page, {
           core: coreReq,
           bonus: bonusReq,
         });
-        await ensureInDeepSearchPage(page);
       }
-
       const snap = await readSearchFormSnapshot(page);
-      return renderFormSnapshotOnly(snap);
+      return renderFormSnapshotOnly(snap, truncated);
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
@@ -1220,28 +640,28 @@ export async function runBossSearchSet(opts: {
 
 export async function runBossSearch(opts: { jobKeyword?: string } = {}): Promise<string> {
   const jobKeyword = opts.jobKeyword?.trim();
-
   try {
     return await withBossSessionPage(async (page) => {
-      const currentUrl = page.url();
-      if (!isBossChatAiFormUrl(currentUrl)) {
-        await clickBossSidebarMenuToPath(page, '深度搜索', '/web/chat/aiform');
-      }
-      if (!isBossChatAiFormUrl(page.url())) {
-        throw new Error('通过侧边栏“深度搜索”进入页面失败，请确认已登录并可访问 /web/chat/aiform。');
-      }
-      await ensureInDeepSearchPage(page);
-
       if (jobKeyword) {
         await selectAiFormJob(page, jobKeyword);
-        await ensureInDeepSearchPage(page);
+      } else {
+        await navigateToAiSearchPage(page, null);
       }
-
       const geeks = await readDeepSearchGeekList(page);
       const title = jobKeyword
-        ? `深度搜索当前列表（岗位：${jobKeyword}，未触发「立即匹配」）`
-        : '深度搜索当前匹配结果（未触发「立即匹配」）';
-      return renderGeekListSection(title, geeks);
+        ? `深度搜索当前列表（岗位：${jobKeyword}，未触发「深度搜索」按钮）`
+        : '深度搜索当前匹配结果（未触发「深度搜索」按钮）';
+      const body = renderGeekListSection(title, geeks);
+      if (geeks.length === 0) {
+        const snap = await readSearchFormSnapshot(page);
+        return [
+          body,
+          '',
+          '提示：该职位暂无匹配记录。匹配记录需在 AI 搜索页点击「深度搜索」按钮生成（消耗当日次数），',
+          `当前剩余：${snap.remainingCountText || '未知'}。`,
+        ].join('\n');
+      }
+      return body;
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
