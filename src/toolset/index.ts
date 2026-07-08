@@ -67,7 +67,14 @@ export async function implListPositionsWithOptions(opts: {
   });
 }
 
-export async function implBossSearch(opts: { jobKeyword?: string } = {}): Promise<string> {
+export async function implBossSearch(
+  opts: {
+    jobKeyword?: string;
+    coreRequirements?: string[];
+    bonusRequirements?: string[];
+    match?: boolean;
+  } = {},
+): Promise<string> {
   return runBossSearch(opts);
 }
 
@@ -89,7 +96,6 @@ export async function implRecommend(jobKeyword?: string): Promise<string> {
 
 export async function implPreview(opts: {
   candidateTarget: string;
-  jobKeyword?: string;
 }): Promise<string> {
   return runPreview(opts);
 }

@@ -1,5 +1,5 @@
 import type { Frame, Page } from 'puppeteer-core';
-import { sleepRandom } from '../browser/index.js';
+import { RESUME_PREVIEW_OPEN_GAP_MS, sleepRandom } from '../browser/index.js';
 import { withBossSessionPage } from '../common/boss_session_page.js';
 import { ensurePage } from '../common/ensure_page.js';
 
@@ -85,6 +85,15 @@ async function ensureInNormalSearchPage(page: Page): Promise<Frame> {
   return frame;
 }
 
+export async function assertNormalSearchPageReadyForPreview(page: Page): Promise<Frame> {
+  if (!isBossChatSearchUrl(page.url())) {
+    throw new Error('当前不在常规搜索页（/web/chat/search），请先通过 boss search 进入。');
+  }
+  const frame = await getSearchFrame(page);
+  await ensureSearchFrameReady(frame);
+  return frame;
+}
+
 async function runKeywordSearch(frame: Frame, keyword: string): Promise<void> {
   const kwLiteral = JSON.stringify(keyword);
   const ok = (await frame.evaluate(`(() => {
@@ -139,6 +148,47 @@ async function readCurrentSearchJob(frame: Frame): Promise<string> {
   return (await frame.evaluate(
     `(() => (document.querySelector(".search-current-job")?.textContent ?? "").replace(/\\s+/g, " ").trim())()`,
   )) as string;
+}
+
+export async function readNormalSearchSelectedJobLabel(frame: Frame): Promise<string> {
+  const label = await readCurrentSearchJob(frame);
+  return label || '默认';
+}
+
+export async function openNormalSearchResumePreview(frame: Frame, target: string): Promise<boolean> {
+  const targetLiteral = JSON.stringify(target.trim());
+  const opened = (await frame.evaluate(`(() => {
+    const raw = ${targetLiteral};
+    const bare = raw.replace(/\\*/g, "");
+    const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
+    const cards = Array.from(document.querySelectorAll(".geek-info-card"));
+    if (cards.length === 0) return false;
+    const targetCard =
+      cards.find((item) => {
+        const name = norm(item.querySelector(".name-label")?.textContent);
+        return name === raw || (!!bare && name.includes(bare));
+      }) ?? null;
+    if (!(targetCard instanceof HTMLElement)) return false;
+
+    function tryOpen(el) {
+      if (!(el instanceof HTMLElement)) return false;
+      const st = window.getComputedStyle(el);
+      if (st.pointerEvents === "none" || Number(st.opacity) < 0.3) return false;
+      el.scrollIntoView({ block: "center", inline: "nearest" });
+      el.click();
+      return true;
+    }
+
+    if (tryOpen(targetCard.querySelector(".name-label"))) return true;
+    if (tryOpen(targetCard.querySelector(".info-detail"))) return true;
+    if (tryOpen(targetCard.querySelector(".geek-info-main, .geek-card-main, .card-content"))) return true;
+    if (tryOpen(targetCard.querySelector("a"))) return true;
+    return tryOpen(targetCard);
+  })()`)) as boolean;
+  if (opened) {
+    await sleepRandom(RESUME_PREVIEW_OPEN_GAP_MS.min, RESUME_PREVIEW_OPEN_GAP_MS.max);
+  }
+  return opened;
 }
 
 async function readNormalSearchCandidates(frame: Frame): Promise<NormalSearchCandidate[]> {

@@ -71,8 +71,8 @@ boss help
 | `boss recommend [岗位关键字]` | 读取推荐候选人列表 |
 | `boss search [关键词]` | 常规搜索牛人列表 |
 | `boss greet <姓名> [--job <岗位>]` | 在当前推荐/深度搜索页对候选人打招呼（不会自动跳转） |
-| `boss preview <姓名> [--job <岗位>]` | 在线简历预览（每日次数有限） |
-| `boss deep-search [岗位关键字]` | 深度搜索当前匹配结果（不会点击立即匹配） |
+| `boss preview <姓名>` | 在线简历预览（每日次数有限） |
+| `boss deep-search [岗位关键字] [--core <要求>] [--bonus <加分项>] [--clear-core] [--clear-bonus] [--match]` | 深度搜索表单状态；`--core` / `--bonus` 可重复，并按传入列表同步分组；`--clear-*` 清空分组；默认不输出候选列表，`--match` 输出最新 20 条 |
 | `boss positions` | 读取职位列表 |
 | `boss jd <名称>` | 抓取职位 JD 缓存到本地 |
 
@@ -99,6 +99,12 @@ boss greet 张三 --job 前端工程师
 
 # 5. 常规搜索牛人
 boss search "langgraph"
+
+# 6. 深度搜索：按传入列表同步分组条件，但不消耗匹配次数
+boss deep-search --core "AI产品经理" --core "做过 RAG 或 Agent 产品落地" --bonus "有 ToB 平台经验"
+
+# 只有明确添加 --match 才会点击「立即匹配」，会消耗今日匹配次数，并只输出最新 20 条
+boss deep-search --match
 ```
 
 ---

@@ -1,5 +1,5 @@
 /**
- * 在线简历预览：须在「推荐」页或「深度搜索 aiform」页且列表已加载；不自动跳转，否则报错。
+ * 在线简历预览：须在「推荐」页、「深度搜索 aiform」页或「常规搜索」页且列表已加载；不自动跳转，否则报错。
  */
 import { join } from 'node:path';
 import { ONLINE_RESUME_IFRAME_WAIT_MAX_MS, snapshotBossPageViewport } from '../browser/index.js';
@@ -22,18 +22,21 @@ import {
   isBossChatAiFormUrl,
   openDeepSearchResumePreview,
   readAiFormSelectedJobLabel,
-  selectAiFormJob,
 } from './deep-search.js';
 import {
   assertRecommendPageReadyForPreview,
   isBossChatRecommendUrl,
   openRecommendResumePreview,
-  selectRecommendJob,
 } from './recommend.js';
+import {
+  assertNormalSearchPageReadyForPreview,
+  isBossChatSearchUrl,
+  openNormalSearchResumePreview,
+  readNormalSearchSelectedJobLabel,
+} from './normal-search.js';
 
 export type PreviewOptions = {
   candidateTarget: string;
-  jobKeyword?: string;
 };
 
 export async function runPreview(options: PreviewOptions): Promise<string> {
@@ -43,7 +46,6 @@ export async function runPreview(options: PreviewOptions): Promise<string> {
   }
   try {
     return await withBossSessionPage(async (page) => {
-      const kw = (options.jobKeyword ?? '').trim();
       const url = page.url();
       let jobLine: string;
       let savedOriginal: Awaited<ReturnType<typeof snapshotBossPageViewport>>;
@@ -51,24 +53,23 @@ export async function runPreview(options: PreviewOptions): Promise<string> {
 
       if (isBossChatAiFormUrl(url)) {
         await ensureInDeepSearchPage(page);
-        if (kw) {
-          const label = await selectAiFormJob(page, kw);
-          await ensureInDeepSearchPage(page);
-          jobLine = `当前岗位：${label}`;
-        } else {
-          const label = await readAiFormSelectedJobLabel(page);
-          jobLine = `当前岗位：${label}`;
-        }
+        const label = await readAiFormSelectedJobLabel(page);
+        jobLine = `当前岗位：${label}`;
         savedOriginal = await snapshotBossPageViewport(page);
         opened = await openDeepSearchResumePreview(page, target);
       } else if (isBossChatRecommendUrl(url)) {
         const frame = await assertRecommendPageReadyForPreview(page);
-        const selectedJob = await selectRecommendJob(frame, kw);
-        jobLine = selectedJob ? `当前岗位：${selectedJob}` : '当前岗位：默认';
+        jobLine = '当前岗位：当前推荐列表';
         savedOriginal = await snapshotBossPageViewport(page);
         opened = await openRecommendResumePreview(frame, target);
+      } else if (isBossChatSearchUrl(url)) {
+        const frame = await assertNormalSearchPageReadyForPreview(page);
+        const label = await readNormalSearchSelectedJobLabel(frame);
+        jobLine = `当前岗位：${label}`;
+        savedOriginal = await snapshotBossPageViewport(page);
+        opened = await openNormalSearchResumePreview(frame, target);
       } else {
-        throw new Error('当前不在推荐列表页或搜索结果页，无法预览候选人。');
+        throw new Error('当前不在推荐列表页、深度搜索页或常规搜索页，无法预览候选人。');
       }
 
       if (!opened) {
