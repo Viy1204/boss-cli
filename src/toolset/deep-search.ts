@@ -8,7 +8,7 @@ import {
   sleepRandom,
 } from '../browser/index.js';
 import { withBossSessionPage } from '../common/boss_session_page.js';
-import { clickBossSidebarMenuToPath } from '../common/boss_sidebar_nav.js';
+import { ensurePage } from '../common/ensure_page.js';
 
 const BOSS_CHAT_AI_FORM_URL = 'https://www.zhipin.com/web/chat/aiform';
 
@@ -60,6 +60,15 @@ export async function ensureInDeepSearchPage(page: Page): Promise<void> {
   if (!isBossChatAiFormUrl(page.url())) {
     throw new Error('当前不在深度搜索页（/web/chat/aiform），请先通过侧栏进入「深度搜索」。');
   }
+  await waitForAiFormReady(page);
+}
+
+async function ensureDeepSearchPageReady(page: Page): Promise<void> {
+  await ensurePage(page, {
+    name: '深度搜索页',
+    targetUrl: BOSS_CHAT_AI_FORM_URL,
+    matches: isBossChatAiFormUrl,
+  });
   await waitForAiFormReady(page);
 }
 
@@ -1183,14 +1192,7 @@ export async function runBossSearchSet(opts: {
 
   try {
     return await withBossSessionPage(async (page) => {
-      const currentUrl = page.url();
-      if (!isBossChatAiFormUrl(currentUrl)) {
-        await clickBossSidebarMenuToPath(page, '深度搜索', '/web/chat/aiform');
-      }
-      if (!isBossChatAiFormUrl(page.url())) {
-        throw new Error('通过侧边栏“深度搜索”进入页面失败，请确认已登录并可访问 /web/chat/aiform。');
-      }
-      await ensureInDeepSearchPage(page);
+      await ensureDeepSearchPageReady(page);
 
       if (jobKeyword) {
         await selectAiFormJob(page, jobKeyword);
@@ -1223,14 +1225,7 @@ export async function runBossSearch(opts: { jobKeyword?: string } = {}): Promise
 
   try {
     return await withBossSessionPage(async (page) => {
-      const currentUrl = page.url();
-      if (!isBossChatAiFormUrl(currentUrl)) {
-        await clickBossSidebarMenuToPath(page, '深度搜索', '/web/chat/aiform');
-      }
-      if (!isBossChatAiFormUrl(page.url())) {
-        throw new Error('通过侧边栏“深度搜索”进入页面失败，请确认已登录并可访问 /web/chat/aiform。');
-      }
-      await ensureInDeepSearchPage(page);
+      await ensureDeepSearchPageReady(page);
 
       if (jobKeyword) {
         await selectAiFormJob(page, jobKeyword);

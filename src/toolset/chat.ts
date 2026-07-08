@@ -7,7 +7,7 @@ import {
   sleepRandom,
 } from '../browser/index.js';
 import { isBossChatIndexUrl } from '../common/auth.js';
-import { ensureChatIndexAllFilter } from './list.js';
+import { ensureChatListReady } from './list.js';
 
 type ChatFrom = 'friend' | 'myself' | 'system' | 'unknown';
 
@@ -25,8 +25,10 @@ function chatRoleTag(from: ChatFrom): string {
 }
 
 async function waitForChatHistoryPanelReady(page: Page, selectedTab?: string): Promise<void> {
+  const selectedTabLiteral = JSON.stringify(selectedTab ?? null);
   await page.waitForFunction(
-    `((tabLabel) => {
+    `(() => {
+      const tabLabel = ${selectedTabLiteral};
       function norm(v) {
         return (v ?? "").replace(/\\s+/g, " ").trim();
       }
@@ -43,9 +45,8 @@ async function waitForChatHistoryPanelReady(page: Page, selectedTab?: string): P
         if (norm(selected?.textContent) !== tabLabel) return false;
       }
       return !!root.querySelector(".record");
-    })`,
+    })()`,
     { timeout: 10_000 },
-    selectedTab ?? null,
   );
 }
 
@@ -113,9 +114,11 @@ async function fetchColleagueChatHistorySection(page: Page): Promise<string | nu
         .filter((x) => x.action || x.operat);
     })()`) as Promise<Array<{ action: string; operat: string }>>;
 
-  const clickTab = (label: string) =>
-    page.evaluate(
-      `((lab) => {
+  const clickTab = (label: string) => {
+    const labelLiteral = JSON.stringify(label);
+    return page.evaluate(
+      `(() => {
+        const lab = ${labelLiteral};
         function norm(v) {
           return (v ?? "").replace(/\\s+/g, " ").trim();
         }
@@ -126,9 +129,9 @@ async function fetchColleagueChatHistorySection(page: Page): Promise<string | nu
         if (sp && !sp.classList.contains("selected")) {
           sp.click();
         }
-      })`,
-      label,
+      })()`,
     );
+  };
 
   await clickTab('同事沟通');
   await sleepRandom(CHAT_HISTORY_TAB_SWITCH_MS.min, CHAT_HISTORY_TAB_SWITCH_MS.max);
@@ -257,12 +260,29 @@ type CandidateSummary = {
   remark: string;
 };
 
-async function fetchCandidateSummary(page: Page): Promise<CandidateSummary> {
+async function fetchCandidateSummary(
+  page: Page,
+  expectedName: string,
+  exactMatch: boolean,
+): Promise<CandidateSummary> {
+  const targetNameLiteral = JSON.stringify(expectedName);
+  const exactMatchLiteral = JSON.stringify(exactMatch);
   const scraped = (await page.evaluate(`(() => {
+    const targetName = ${targetNameLiteral};
+    const exact = ${exactMatchLiteral};
     const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
-    const root = document.querySelector(".base-info-single-container");
+    const matches = (value) => exact ? value === targetName : value.includes(targetName);
+    const isVisible = (el) => {
+      if (!el) return false;
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+    };
+    const roots = Array.from(document.querySelectorAll(".base-info-single-container")).filter(isVisible);
+    const root = roots.find((el) => matches(norm(el.querySelector(".name-box")?.textContent)));
     if (!root) {
-      throw new Error("未找到候选人详情容器（.base-info-single-container）。");
+      const visibleNames = roots.map((el) => norm(el.querySelector(".name-box")?.textContent)).filter(Boolean).join(", ");
+      throw new Error("未找到目标候选人详情容器：" + targetName + "；当前可见详情：" + (visibleNames || "空"));
     }
     const name = norm(root.querySelector(".name-box")?.textContent);
     const active = norm(root.querySelector(".high-light-orange.active-time span")?.textContent);
@@ -303,7 +323,7 @@ export async function runOpenCandidateChat(
   const targetName = candidateName.trim();
 
   try {
-    await ensureChatIndexAllFilter(page);
+    await ensureChatListReady(page);
     if (!isBossChatIndexUrl(page.url())) {
       throw new Error('当前不在沟通列表页（/web/chat/index），无法打开候选人聊天。');
     }
@@ -366,30 +386,99 @@ export async function runOpenCandidateChat(
       throw new Error(`未在聊天列表中找到候选人：${targetName}`);
     }
 
-    await targetWrap.evaluate(`((el) => {
-      const row = el.querySelector(".geek-item") ?? el;
-      row.scrollIntoView({ behavior: "instant", block: "center", inline: "nearest" });
-      row.click();
-    })`);
+    const clickNameLiteral = JSON.stringify(foundName || targetName);
+    const clickExactLiteral = JSON.stringify(exact);
+    const scrolledToTarget = (await page.evaluate(`(() => {
+      const targetName = ${clickNameLiteral};
+      const exactMatch = ${clickExactLiteral};
+      const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
+      const matches = (value) => exactMatch ? value === targetName : value.includes(targetName);
+      const wraps = Array.from(document.querySelectorAll(".geek-item-wrap"));
+      const wrap = wraps.find((el) => matches(norm(el.querySelector(".geek-name")?.textContent)));
+      if (!wrap) return false;
+      const row = wrap.querySelector(".geek-item") || wrap;
+      let node = row.parentElement;
+      let scroller = null;
+      while (node) {
+        const style = window.getComputedStyle(node);
+        const overflowY = style.overflowY;
+        const canScroll =
+          (overflowY === "auto" || overflowY === "scroll") &&
+          node.scrollHeight > node.clientHeight;
+        if (canScroll) {
+          scroller = node;
+          break;
+        }
+        node = node.parentElement;
+      }
+      if (scroller) {
+        const rowRect = row.getBoundingClientRect();
+        const scrollerRect = scroller.getBoundingClientRect();
+        scroller.scrollTop += rowRect.top - scrollerRect.top - (scroller.clientHeight - rowRect.height) / 2;
+      } else {
+        row.scrollIntoView({ behavior: "instant", block: "center", inline: "nearest" });
+      }
+      return true;
+    })()`)) as boolean;
+    if (!scrolledToTarget) {
+      throw new Error(`未能重新定位候选人行：${foundName || targetName}`);
+    }
+    await sleepRandom(120, 220);
+    const clickPoint = (await page.evaluate(`(() => {
+      const targetName = ${clickNameLiteral};
+      const exactMatch = ${clickExactLiteral};
+      const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
+      const matches = (value) => exactMatch ? value === targetName : value.includes(targetName);
+      const wraps = Array.from(document.querySelectorAll(".geek-item-wrap"));
+      const wrap = wraps.find((el) => matches(norm(el.querySelector(".geek-name")?.textContent)));
+      if (!wrap) return null;
+      const row = wrap.querySelector(".geek-item") || wrap;
+      const rect = row.getBoundingClientRect();
+      return {
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+      };
+    })()`)) as { x: number; y: number } | null;
+    if (!clickPoint) {
+      throw new Error(`未能重新定位候选人行：${foundName || targetName}`);
+    }
+    await page.mouse.click(clickPoint.x, clickPoint.y, { delay: 40 });
 
     await sleepRandom(OPEN_CHAT_AFTER_ROW_CLICK_MS.min, OPEN_CHAT_AFTER_ROW_CLICK_MS.max);
 
-    let selected = await targetWrap
-      .$eval('.geek-item', (el) => el.classList.contains('selected'))
-      .catch(() => false);
-
     try {
+      const expectedNameLiteral = JSON.stringify(foundName || targetName);
+      const exactLiteral = JSON.stringify(exact);
       await page.waitForFunction(
-        `((name) => {
-          const text = document.querySelector(".base-info-single-container .name-box")?.textContent ?? "";
-          return text.replace(/\\s+/g, " ").trim().includes(name);
-        })`,
+        `(() => {
+          const name = ${expectedNameLiteral};
+          const exactMatch = ${exactLiteral};
+          const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
+          const matches = (value) => exactMatch ? value === name : value.includes(name);
+          const isVisible = (el) => {
+            if (!el) return false;
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+          };
+          const selected = Array.from(document.querySelectorAll(".geek-item.selected")).find(isVisible);
+          const selectedName = norm(selected?.querySelector(".geek-name")?.textContent);
+          const root = Array.from(document.querySelectorAll(".base-info-single-container")).find(isVisible);
+          const detailName = norm(root?.querySelector(".name-box")?.textContent);
+          return matches(selectedName) && matches(detailName);
+        })()`,
         { timeout: 15_000 },
-        foundName || targetName,
       );
       await page.waitForFunction(
         `(() => {
-          const list = document.querySelector(".chat-message-list");
+          const isVisible = (el) => {
+            if (!el) return false;
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+          };
+          const lists = Array.from(document.querySelectorAll(".chat-message-list")).filter(isVisible);
+          const list = lists[lists.length - 1];
           if (!list) return false;
           const items = list.querySelectorAll(".message-item");
           if (!items || items.length === 0) return false;
@@ -406,11 +495,23 @@ export async function runOpenCandidateChat(
         { timeout: 20_000 },
       );
     } catch {
-      selected = await targetWrap
-        .$eval('.geek-item', (el) => el.classList.contains('selected'))
-        .catch(() => selected);
+      const state = (await page.evaluate(`(() => {
+        const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
+        const isVisible = (el) => {
+          if (!el) return false;
+          const rect = el.getBoundingClientRect();
+          const style = window.getComputedStyle(el);
+          return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+        };
+        const selected = Array.from(document.querySelectorAll(".geek-item.selected")).find(isVisible);
+        const root = Array.from(document.querySelectorAll(".base-info-single-container")).find(isVisible);
+        return {
+          selectedName: norm(selected?.querySelector(".geek-name")?.textContent),
+          detailName: norm(root?.querySelector(".name-box")?.textContent),
+        };
+      })()`)) as { selectedName: string; detailName: string };
       throw new Error(
-        `已尝试点击 ${foundName}（selected=${String(selected)}），但未检测到对应聊天详情面板。`,
+        `已尝试点击 ${foundName}，但未检测到对应聊天详情面板（selected=${state.selectedName || '空'}，detail=${state.detailName || '空'}）。`,
       );
     }
 
@@ -422,11 +523,22 @@ export async function runOpenCandidateChat(
     let hasFriendResumeAttachment = false;
     const scraped = (await page.evaluate(`(() => {
       const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
+      const isVisible = (el) => {
+        if (!el) return false;
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+      };
       /** Boss 系统里的「消息优先提醒」增值服务条，对业务无意义，过滤掉 */
       function isBossPriorityUpsellSystemText(text) {
         return norm(text).indexOf("优先提醒") !== -1;
       }
-      const items = Array.from(document.querySelectorAll(".chat-message-list .message-item"));
+      const lists = Array.from(document.querySelectorAll(".chat-message-list")).filter(isVisible);
+      const list = lists[lists.length - 1];
+      if (!list) {
+        throw new Error("未找到可见聊天消息列表（.chat-message-list）。");
+      }
+      const items = Array.from(list.querySelectorAll(".message-item"));
       let currentTime = "";
       const messages = [];
       let hasFriendResumeAttachment = false;
@@ -487,7 +599,7 @@ export async function runOpenCandidateChat(
     });
 
     const resumeStatus = hasFriendResumeAttachment ? '已获取' : '未获取';
-    const summary = await fetchCandidateSummary(page);
+    const summary = await fetchCandidateSummary(page, foundName || targetName, exact);
 
     const out: string[] = [
       `成功进入候选人聊天：${foundName}`,

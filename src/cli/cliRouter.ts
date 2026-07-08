@@ -12,6 +12,7 @@ import {
   implListUnreadCandidates,
   implListPositions,
   implListPositionsWithOptions,
+  implNormalSearch,
   implOpenChat,
   implRecommend,
   implPreview,
@@ -160,13 +161,15 @@ function printHelp(): void {
       抓取指定职位详情并缓存到项目目录同名 .md
   boss recommend [岗位关键字]
       进入推荐页并读取推荐列表；带岗位关键字时先在岗位下拉中模糊匹配并切换
+  boss search [关键词]
+      进入「搜索」页并读取 Boss 默认常规搜索结果；带关键词时填入搜索框并回车搜索
   boss preview <姓名> [--job <岗位关键字>]
       在线简历预览：须当前已在「推荐」(/web/chat/recommend) 或「深度搜索」(/web/chat/aiform) 且列表已加载；不会自动跳转
       注意：平台对在线简历每日可查看次数有限，请按需使用、谨慎查看
   boss greet <姓名> [--job <岗位关键字>]
-      在「推荐」页（或当前已在 Boss 聊天侧栏打开的、含候选人列表的页面）对列表中的候选人点击“打招呼”
+      须当前已在「推荐」(/web/chat/recommend) 或「深度搜索」(/web/chat/aiform) 且列表已加载；不会自动跳转
+      对当前列表中的候选人点击“打招呼”
       可选 --job 先在岗位下拉中模糊匹配并切换（与 recommend / preview 共用同一套选择逻辑）
-      须先在对应页加载出候选人列表
       会消耗打招呼次数且单次成本较高，请谨慎使用
   boss deep-search [岗位关键字]（别名 deepsearch）
       进入「深度搜索」页并输出当前匹配结果列表；可选岗位关键字仅切换下拉框。不会点击「立即匹配」
@@ -388,6 +391,15 @@ export async function executeCommand(argv: string[]): Promise<string> {
     }
     const jobKeyword = rest.join(' ').trim();
     return implBossSearch(jobKeyword ? { jobKeyword } : {});
+  }
+
+  if (cmd === 'search') {
+    const { rest, opts, flags } = parseOpts(tail);
+    if (flags.size > 0 || Object.keys(opts).length > 0) {
+      die('❌ 用法: search [关键词]');
+    }
+    const keyword = rest.join(' ').trim();
+    return implNormalSearch(keyword || undefined);
   }
 
   if (cmd === 'preview') {

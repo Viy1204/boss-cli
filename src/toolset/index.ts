@@ -10,6 +10,7 @@ import {
 import { runSendChatMessage } from './send.js';
 import { withBossSessionPage } from '../common/boss_session_page.js';
 import { runBossSearch, runBossSearchSet } from './deep-search.js';
+import { runNormalSearch } from './normal-search.js';
 import { runRecommend } from './recommend.js';
 import { runPreview } from './preview.js';
 import { runRecommendGreet } from './greet.js';
@@ -68,6 +69,10 @@ export async function implListPositionsWithOptions(opts: {
 
 export async function implBossSearch(opts: { jobKeyword?: string } = {}): Promise<string> {
   return runBossSearch(opts);
+}
+
+export async function implNormalSearch(keyword?: string): Promise<string> {
+  return runNormalSearch(keyword);
 }
 
 export async function implBossSearchSet(opts: {

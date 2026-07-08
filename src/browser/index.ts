@@ -4,10 +4,6 @@
 export * from './timing.js';
 export * from './human_delay.js';
 export {
-  hideAgentOperatingIndicator,
-  showAgentOperatingIndicator,
-} from './agent_operating_indicator.js';
-export {
   resumeHeight,
   setTempHeight,
   snapshotBossPageViewport,

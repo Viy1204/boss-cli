@@ -22,7 +22,7 @@ import {
 } from './deep-search.js';
 import {
   clickGreet,
-  ensureInRecommendPage,
+  assertRecommendPageReady,
   markGreetProduced,
   readRecommendList,
   renderRecommendList,
@@ -88,7 +88,7 @@ export async function runRecommendGreet(options: GreetOptions): Promise<string> 
         return lines.join('\n');
       }
 
-      const frame = await ensureInRecommendPage(page);
+      const frame = await assertRecommendPageReady(page, '打招呼');
       const selectedJob = await selectRecommendJob(frame, kw);
       const jobLine = selectedJob ? `当前岗位：${selectedJob}` : '当前岗位：默认';
       const savedViewport = await snapshotBossPageViewport(page);
@@ -109,7 +109,7 @@ export async function runRecommendGreet(options: GreetOptions): Promise<string> 
       } finally {
         await resumeHeight(page, savedViewport);
       }
-    });
+    }, { ensureChatShell: false, ensureMenuList: false });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     throw new Error(`执行打招呼失败：${message}`);
