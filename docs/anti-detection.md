@@ -1,5 +1,13 @@
 # Boss 反自动化检测：防御策略文档
 
+## 2026-07-09 baseline review
+
+- Captured snapshot: `docs/research/boss-online-js/2026-07-09`.
+- Boss index changed from `v10609` to `v10641`; Boss bundle stayed `v6202`; Zhipin sign stayed `v5309`.
+- Same-URL hash changes: 0. Risk pattern categories matched the 2026-07-08 baseline.
+- `src/common/boss_availability.ts` was updated with the new Boss index entry scripts and guarded hashes.
+- `src/common/boss_page_guards.ts` request guards still cover the observed risk/security/report URLs in this snapshot.
+
 ## 概述
 
 Boss 直聘的前端安全体系由多个检测模块组成，在 CDP 控制的浏览器中打开页面时，其安全模块会通过多种手段判断浏览器是否被自动化控制，并在检测到后执行数据上报、关闭/跳转/返回上一页等破坏性操作。本文档分两部分描述：
