@@ -10,6 +10,7 @@ import {
   implLogin,
   implListCandidates,
   implListUnreadCandidates,
+  implOpenChatByIndex,
   implListPositions,
   implListPositionsWithOptions,
   implNormalSearch,
@@ -146,6 +147,9 @@ function printHelp(): void {
       读取「全部」聊天列表候选人；--unread 仅显示未读（角标>0）
   boss chat <姓名> [--strict]
       打开指定联系人会话；默认包含匹配，--strict 为精确匹配
+  boss chat [姓名] --index <序号> [--unread] [--strict]
+      按 boss list 输出的 1-based 序号打开会话；--unread 表示序号对应 boss list --unread
+      同时提供姓名时会校验该序号候选人姓名，--strict 表示精确校验
       仅用于已建立联系的候选人（即在 list 里可见的会话对象）
   boss action <操作> [--remark <备注>]
       仅在当前聊天页已打开候选人详情时执行操作，并只返回 action 执行结果
@@ -405,15 +409,36 @@ export async function executeCommand(argv: string[]): Promise<string> {
 
   if (cmd === 'chat') {
     const { rest, flags, opts } = parseOpts(tail);
-    const nameArg = rest[0]?.trim();
-    if (!nameArg) {
-      die('❌ 用法: chat <姓名> [--strict]');
-    }
+    const nameArg = rest.join(' ').trim();
     if ((opts.action ?? '').trim().length > 0 || (opts.remark ?? '').trim().length > 0) {
       die('❌ chat 不再支持 --action/--remark。请改用: action <操作> [--remark <备注>]');
     }
+    const allowedOpts = new Set(['index', 'i', 'action', 'remark']);
+    const unsupportedOpts = Object.keys(opts).filter((key) => !allowedOpts.has(key));
+    if (unsupportedOpts.length > 0) {
+      die(`❌ chat 不支持参数: --${unsupportedOpts.join(', --')}`);
+    }
     // 默认模糊匹配（包含）；仅在指定 --strict 时做精确匹配
     const exact = flags.has('strict');
+    const indexRaw = (opts.index ?? opts.i ?? '').trim();
+    if (indexRaw) {
+      const index = Number(indexRaw);
+      if (!Number.isInteger(index) || index < 1) {
+        die(`❌ chat --index 必须是从 1 开始的整数，当前值: ${indexRaw}`);
+      }
+      return implOpenChatByIndex({
+        index,
+        unreadOnly: flags.has('unread'),
+        expectedName: nameArg || undefined,
+        exact,
+      });
+    }
+    if (flags.has('unread')) {
+      die('❌ chat 只有配合 --index 时才支持 --unread。用法: chat --index <序号> --unread');
+    }
+    if (!nameArg) {
+      die('❌ 用法: chat <姓名> [--strict]；或 chat [姓名] --index <序号> [--unread]');
+    }
     return implOpenChat(nameArg, exact);
   }
 

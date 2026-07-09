@@ -2,7 +2,7 @@
 import { runLogin } from './login.js';
 import { runGetCandidateList } from './list.js';
 import { runListOpenPositions } from './jd.js';
-import { runOpenCandidateChat } from './chat.js';
+import { runOpenCandidateChat, runOpenCandidateChatByIndex } from './chat.js';
 import {
   runChatActionOnCurrentConversation,
   type ChatPageAction,
@@ -34,6 +34,22 @@ export async function implOpenChat(
   exact: boolean,
 ): Promise<string> {
   return withBossSessionPage(async (page) => runOpenCandidateChat(page, candidateName, exact));
+}
+
+export async function implOpenChatByIndex(params: {
+  index: number;
+  unreadOnly?: boolean;
+  expectedName?: string;
+  exact?: boolean;
+}): Promise<string> {
+  return withBossSessionPage(async (page) =>
+    runOpenCandidateChatByIndex(page, {
+      index: params.index,
+      filter: params.unreadOnly ? 'unread' : 'all',
+      expectedName: params.expectedName,
+      exact: params.exact,
+    }),
+  );
 }
 
 export async function implChatAction(params: {
