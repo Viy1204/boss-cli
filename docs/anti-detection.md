@@ -1,5 +1,13 @@
 # Boss 反自动化检测：防御策略文档
 
+## 2026-07-13 baseline review
+
+- Captured snapshot: `docs/research/boss-online-js/2026-07-13`.
+- Boss index changed from `v10641` to `v10687`; Boss bundle changed from `v6202` to `v6214`; Zhipin sign stayed `v5309`.
+- Same-URL hash changes: 0. Risk pattern categories matched the 2026-07-09 baseline.
+- `src/common/boss_availability.ts` was updated with the new Boss index and bundle entry scripts plus guarded hashes.
+- `src/common/boss_page_guards.ts` request guards still cover the observed risk/security/report URLs in this snapshot.
+
 ## 2026-07-09 baseline review
 
 - Captured snapshot: `docs/research/boss-online-js/2026-07-09`.
