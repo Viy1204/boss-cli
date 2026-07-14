@@ -1,5 +1,15 @@
 # Boss 反自动化检测：防御策略文档
 
+## 2026-07-15 baseline review
+
+- Captured snapshot: `docs/research/boss-online-js/2026-07-15`.
+- Boss index changed from `v10718` to `v10723`; Boss bundle changed from `v6230` to `v6232`; Zhipin sign changed from `v5309` to `v5310`.
+- `risk-detection.js` is byte-for-byte identical after normalizing its version path, and all configured high-risk pattern counts are unchanged.
+- The sign vendor and iframe-core files are byte-for-byte unchanged. The sign app is byte-for-byte identical after normalizing its version and build hashes, so no new anti-debug or fingerprinting behavior was introduced.
+- Bundle chunk `270.js` only changes empty job-list initialization. It adds no strings or high-risk pattern hits; all other bundle chunks are unchanged.
+- Same-URL hash changes: 0. Existing version-independent request guards still cover the observed security scripts, report endpoints, and risk-navigation paths.
+- `src/common/boss_availability.ts` was updated to the new entry URLs and guarded hashes. No page-guard strategy change is required.
+
 ## 2026-07-14 baseline review
 
 - Captured snapshot: `docs/research/boss-online-js/2026-07-14`.
