@@ -94,8 +94,8 @@ export async function implBossSearch(
   return runBossSearch(opts);
 }
 
-export async function implNormalSearch(keyword?: string): Promise<string> {
-  return runNormalSearch(keyword);
+export async function implNormalSearch(keyword?: string, jobKeyword?: string): Promise<string> {
+  return runNormalSearch(keyword, jobKeyword);
 }
 
 export async function implBossSearchSet(opts: {

@@ -165,8 +165,9 @@ function printHelp(): void {
       抓取指定职位详情并缓存到项目目录同名 .md
   boss recommend [岗位关键字]
       进入推荐页并读取推荐列表；带岗位关键字时先在岗位下拉中模糊匹配并切换
-  boss search [关键词]
-      进入「搜索」页并读取 Boss 默认常规搜索结果；带关键词时填入搜索框并回车搜索
+  boss search [关键词] [--job <岗位关键字>]
+      进入「搜索」页并读取 Boss 默认常规搜索结果；带关键词时填入搜索框并回车搜索；
+      带 --job 时先在岗位下拉中模糊匹配并切换到该岗位再搜索
   boss preview <姓名>
       在线简历预览：须当前已在「推荐」(/web/chat/recommend)、「深度搜索」(/web/chat/aiform) 或「常规搜索」(/web/chat/search) 且列表已加载；不会自动跳转
       注意：平台对在线简历每日可查看次数有限，请按需使用、谨慎查看
@@ -515,11 +516,16 @@ export async function executeCommand(argv: string[]): Promise<string> {
 
   if (cmd === 'search') {
     const { rest, opts, flags } = parseOpts(tail);
-    if (flags.size > 0 || Object.keys(opts).length > 0) {
-      die('❌ 用法: search [关键词]');
+    if (flags.size > 0) {
+      die('❌ 用法: search [关键词] [--job <岗位关键字>]');
+    }
+    const jobKeyword = opts.job?.trim();
+    const extraOpts = Object.keys(opts).filter((k) => k !== 'job');
+    if (extraOpts.length > 0) {
+      die('❌ 用法: search [关键词] [--job <岗位关键字>]');
     }
     const keyword = rest.join(' ').trim();
-    return implNormalSearch(keyword || undefined);
+    return implNormalSearch(keyword || undefined, jobKeyword || undefined);
   }
 
   if (cmd === 'preview') {

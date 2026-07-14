@@ -6,6 +6,7 @@ import { ensurePage } from '../common/ensure_page.js';
 const BOSS_CHAT_SEARCH_URL = 'https://www.zhipin.com/web/chat/search';
 const SEARCH_FRAME_READY_TIMEOUT_MS = 18_000;
 const SEARCH_RESULT_SETTLE_MS = { min: 900, max: 1600 } as const;
+const JOB_SWITCH_SETTLE_MS = { min: 700, max: 1300 } as const;
 
 type NormalSearchCandidate = {
   name: string;
@@ -155,6 +156,69 @@ export async function readNormalSearchSelectedJobLabel(frame: Frame): Promise<st
   return label || '默认';
 }
 
+/**
+ * 在常规搜索页（iframe）切换当前岗位。岗位选项常驻 `.job-name`（即账号自己的开放职位），
+ * 模糊匹配 keyword 后点击，等待 `.search-current-job` 变更。keyword 为空则返回当前岗位。
+ */
+export async function selectNormalSearchJob(frame: Frame, keyword: string): Promise<string> {
+  const kw = keyword.trim();
+  if (!kw) {
+    return readNormalSearchSelectedJobLabel(frame);
+  }
+  const before = await readCurrentSearchJob(frame);
+  const kwLiteral = JSON.stringify(kw);
+
+  // 岗位下拉的选项（.job-name）常驻 DOM，但先点触发器展开以兼容折叠态。
+  await frame.evaluate(`(() => {
+    const h = document.querySelector(".search-job-list-C .ui-dropmenu-label")
+      || document.querySelector(".ui-dropmenu-label");
+    if (h instanceof HTMLElement) {
+      h.scrollIntoView({ block: "center", inline: "nearest" });
+      h.click();
+    }
+  })()`);
+  await sleepRandom(JOB_SWITCH_SETTLE_MS.min, JOB_SWITCH_SETTLE_MS.max);
+
+  const picked = (await frame.evaluate(`(() => {
+    const kw = ${kwLiteral};
+    const norm = (v) => (v ?? "").replace(/\\s+/g, "").trim().toLowerCase();
+    const items = Array.from(document.querySelectorAll(".job-name"));
+    if (items.length === 0) return { ok: false, reason: "empty" };
+    const target = items.find((el) => norm(el.textContent).includes(norm(kw)));
+    if (!(target instanceof HTMLElement)) {
+      return { ok: false, reason: "not_found", available: items.map((el) => (el.textContent ?? "").replace(/\\s+/g, " ").trim()) };
+    }
+    const label = (target.textContent ?? "").replace(/\\s+/g, " ").trim();
+    target.scrollIntoView({ block: "center", inline: "nearest" });
+    target.click();
+    return { ok: true, label };
+  })()`)) as { ok: boolean; label?: string; reason?: string; available?: string[] };
+
+  if (!picked.ok) {
+    if (picked.reason === 'not_found') {
+      const avail = (picked.available ?? []).join('｜');
+      throw new Error(`未找到匹配岗位“${kw}”。可选岗位：${avail || '（空）'}`);
+    }
+    throw new Error('未找到常规搜索岗位下拉选项（.job-name）。');
+  }
+
+  const label = picked.label ?? kw;
+  try {
+    await frame.waitForFunction(
+      `((prev) => {
+        const cur = (document.querySelector(".search-current-job")?.textContent ?? "").replace(/\\s+/g, " ").trim();
+        return cur.length > 0 && cur !== prev;
+      })`,
+      { timeout: 8_000 },
+      before,
+    );
+  } catch {
+    // 当前岗位文案未变（可能本就是该岗）——不阻断，返回读到的 label。
+  }
+  await sleepRandom(JOB_SWITCH_SETTLE_MS.min, JOB_SWITCH_SETTLE_MS.max);
+  return label;
+}
+
 export async function openNormalSearchResumePreview(frame: Frame, target: string): Promise<boolean> {
   const targetLiteral = JSON.stringify(target.trim());
   const opened = (await frame.evaluate(`(() => {
@@ -261,14 +325,18 @@ function renderNormalSearchCandidates(
   return lines.join('\n');
 }
 
-export async function runNormalSearch(keyword?: string): Promise<string> {
+export async function runNormalSearch(keyword?: string, jobKeyword?: string): Promise<string> {
   const kw = (keyword ?? '').trim();
+  const jobKw = (jobKeyword ?? '').trim();
   if (kw.length > 20) {
     throw new Error('常规搜索关键词最多 20 个字符。');
   }
   try {
     return await withBossSessionPage(async (page) => {
       const frame = await ensureInNormalSearchPage(page);
+      if (jobKw) {
+        await selectNormalSearchJob(frame, jobKw);
+      }
       if (kw) {
         await runKeywordSearch(frame, kw);
       }
