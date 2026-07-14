@@ -5,9 +5,9 @@ import {
   LIST_POLL_MS,
   sleepRandom,
 } from '../browser/index.js';
-import { isBossChatIndexUrl } from '../common/auth.js';
+import { BOSS_CHAT_INDEX_URL, isBossChatIndexUrl } from '../common/auth.js';
+import { ensurePage } from '../common/ensure_page.js';
 import { withBossSessionPage } from '../common/boss_session_page.js';
-import { clickBossSidebarMenuToPath } from '../common/boss_sidebar_nav.js';
 
 type CandidateItem = {
   name: string;
@@ -47,69 +47,71 @@ async function waitForCandidateListSettled(
   }
 }
 
-async function clickChatFilterTabAll(page: Page): Promise<void> {
+async function clickChatFilterTab(page: Page, label: string): Promise<void> {
+  const labelLiteral = JSON.stringify(label);
   await page.evaluate(`(() => {
-    const targetText = "全部";
+    const targetText = ${labelLiteral};
     const container = document.querySelector(".chat-message-filter-left");
-    if (!container) return;
+    if (!container) {
+      throw new Error("未找到聊天筛选容器：.chat-message-filter-left");
+    }
     const spans = Array.from(container.querySelectorAll("span"));
     const norm = (v) => (v ?? "").replace(/\\s+/g, "");
     const target = spans.find((el) => norm(el.textContent).includes(targetText));
-    if (!target) return;
+    if (!target) {
+      const labels = spans.map((el) => norm(el.textContent)).filter(Boolean).join(",");
+      throw new Error("未找到聊天筛选项：" + targetText + "；当前筛选项：" + (labels || "空"));
+    }
     target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     target.click();
   })()`);
 }
 
-async function waitForChatFilterAllSelected(page: Page): Promise<void> {
+async function waitForChatFilterTabSelected(page: Page, label: string): Promise<void> {
+  const labelLiteral = JSON.stringify(label);
   await page.waitForFunction(
     `(() => {
+      const targetText = ${labelLiteral};
       const container = document.querySelector(".chat-message-filter-left");
       if (!container) return false;
       const norm = (v) => (v ?? "").replace(/\\s+/g, "");
       const tabs = Array.from(container.querySelectorAll("span"));
-      const allTab = tabs.find((el) => norm(el.textContent).includes("全部"));
-      if (!allTab) return false;
-      const cls = String(allTab.className || "");
+      const tab = tabs.find((el) => norm(el.textContent).includes(targetText));
+      if (!tab) return false;
+      const cls = String(tab.className || "");
       const selectedByClass = /active|selected|current|checked/.test(cls);
-      const selectedByAria = allTab.getAttribute("aria-selected") === "true";
-      const selectedByAncestor = !!allTab.closest(".active, .selected, .current, .checked");
+      const selectedByAria = tab.getAttribute("aria-selected") === "true";
+      const selectedByAncestor = !!tab.closest(".active, .selected, .current, .checked");
       return selectedByClass || selectedByAria || selectedByAncestor;
     })()`,
     { timeout: 8_000 },
   );
 }
 
-/**
- * 与 `list` 一致：若当前不在沟通列表则点侧栏「沟通」进入 `/web/chat/index`，
- * 再点左侧筛选「全部」并等待列表稳定。`chat` 在按姓名找人前需处于该状态。
- */
-export async function ensureChatIndexAllFilter(page: Page): Promise<void> {
-  const currentUrl = page.url();
-  if (!isBossChatIndexUrl(currentUrl)) {
-    await clickBossSidebarMenuToPath(page, '沟通', '/web/chat/index');
-  }
-
-  if (!isBossChatIndexUrl(page.url())) {
-    throw new Error('通过侧边栏“沟通”进入聊天列表页失败，请确认已登录并可访问 /web/chat/index。');
-  }
+export async function ensureChatListReady(
+  page: Page,
+  filter: 'all' | 'unread' = 'all',
+): Promise<void> {
+  await ensurePage(page, {
+    name: '沟通列表页',
+    targetUrl: BOSS_CHAT_INDEX_URL,
+    matches: isBossChatIndexUrl,
+  });
 
   await page.waitForFunction(
     `(() => {
       const filter = document.querySelector(".chat-message-filter-left");
       if (!filter) return false;
       const tabs = Array.from(filter.querySelectorAll("span"));
-      if (tabs.length < 2) return false;
-      const list = document.querySelector(".chat-list, .chat-item-list, .geek-list");
-      const hasItems = document.querySelectorAll(".geek-item").length > 0;
-      return !!list || hasItems;
+      return tabs.length >= 2;
     })()`,
     { timeout: 15_000 },
   );
 
-  await clickChatFilterTabAll(page);
+  const filterLabel = filter === 'unread' ? '未读' : '全部';
+  await clickChatFilterTab(page, filterLabel);
   await sleepRandom(LIST_FILTER_GAP_MS.min, LIST_FILTER_GAP_MS.max);
-  await waitForChatFilterAllSelected(page);
+  await waitForChatFilterTabSelected(page, filterLabel);
   await waitForCandidateListSettled(page, {
     timeoutMs: 18_000,
     pollMsMin: LIST_POLL_MS.min,
@@ -125,7 +127,7 @@ export async function runGetCandidateList(
 
   try {
     return await withBossSessionPage(async (page) => {
-      await ensureChatIndexAllFilter(page);
+      await ensureChatListReady(page, unreadOnly ? 'unread' : 'all');
 
       const items = (await page.evaluate(
         `(() => {
@@ -148,7 +150,7 @@ export async function runGetCandidateList(
 
       const candidates = items.filter((it) => it.name) as CandidateItem[];
       const withUnread = candidates.filter((it) => it.unreadCount > 0).length;
-      const visible = unreadOnly ? candidates.filter((it) => it.unreadCount > 0) : candidates;
+      const visible = unreadOnly ? candidates : candidates;
       const lines = visible.map((it, idx) => {
         const base = `${idx + 1}. ${it.name}${it.job ? `｜${it.job}` : ''}`;
         const meta = [
@@ -165,7 +167,7 @@ export async function runGetCandidateList(
 
       return [
         unreadOnly
-          ? `未读筛选：共 ${visible.length} 人（全部列表 ${candidates.length} 人中有未读角标者 ${withUnread} 人）。`
+          ? `未读筛选：共 ${visible.length} 人（已切换页面「未读」筛选）。`
           : `沟通列表共 ${candidates.length} 人，其中 ${withUnread} 人有未读消息。`,
         previewText,
       ]

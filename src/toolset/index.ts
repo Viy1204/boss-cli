@@ -2,7 +2,7 @@
 import { runLogin } from './login.js';
 import { runGetCandidateList } from './list.js';
 import { runListOpenPositions } from './jd.js';
-import { runOpenCandidateChat } from './chat.js';
+import { runOpenCandidateChat, runOpenCandidateChatByIndex } from './chat.js';
 import {
   runChatActionOnCurrentConversation,
   type ChatPageAction,
@@ -10,6 +10,7 @@ import {
 import { runSendChatMessage } from './send.js';
 import { withBossSessionPage } from '../common/boss_session_page.js';
 import { runBossSearch, runBossSearchSet } from './deep-search.js';
+import { runNormalSearch } from './normal-search.js';
 import { runRecommend } from './recommend.js';
 import { runPreview } from './preview.js';
 import { runRecommendGreet } from './greet.js';
@@ -33,6 +34,22 @@ export async function implOpenChat(
   exact: boolean,
 ): Promise<string> {
   return withBossSessionPage(async (page) => runOpenCandidateChat(page, candidateName, exact));
+}
+
+export async function implOpenChatByIndex(params: {
+  index: number;
+  unreadOnly?: boolean;
+  expectedName?: string;
+  exact?: boolean;
+}): Promise<string> {
+  return withBossSessionPage(async (page) =>
+    runOpenCandidateChatByIndex(page, {
+      index: params.index,
+      filter: params.unreadOnly ? 'unread' : 'all',
+      expectedName: params.expectedName,
+      exact: params.exact,
+    }),
+  );
 }
 
 export async function implChatAction(params: {
@@ -66,8 +83,19 @@ export async function implListPositionsWithOptions(opts: {
   });
 }
 
-export async function implBossSearch(opts: { jobKeyword?: string } = {}): Promise<string> {
+export async function implBossSearch(
+  opts: {
+    jobKeyword?: string;
+    coreRequirements?: string[];
+    bonusRequirements?: string[];
+    match?: boolean;
+  } = {},
+): Promise<string> {
   return runBossSearch(opts);
+}
+
+export async function implNormalSearch(keyword?: string, jobKeyword?: string): Promise<string> {
+  return runNormalSearch(keyword, jobKeyword);
 }
 
 export async function implBossSearchSet(opts: {
@@ -84,7 +112,6 @@ export async function implRecommend(jobKeyword?: string): Promise<string> {
 
 export async function implPreview(opts: {
   candidateTarget: string;
-  jobKeyword?: string;
 }): Promise<string> {
   return runPreview(opts);
 }

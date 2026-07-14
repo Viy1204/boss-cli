@@ -66,12 +66,14 @@ boss help
 | `boss update` | 通过 npm 安装最新版 boss-cli |
 | `boss list [--unread]` | 读取聊天列表；`--unread` 仅未读 |
 | `boss chat <姓名> [--strict]` | 打开指定候选人会话 |
+| `boss chat [姓名] --index <序号> [--unread] [--strict]` | 按 `boss list` 输出序号打开会话；同名候选人建议用序号 |
 | `boss send [--text <内容>]` | 向当前会话发送消息 |
 | `boss action <操作>` | 索要简历 / 不合适 / 备注 / 交换微信等 |
 | `boss recommend [岗位关键字]` | 读取推荐候选人列表 |
-| `boss greet <姓名> [--job <岗位>]` | 对推荐候选人打招呼（有次数限制） |
-| `boss preview <姓名> [--job <岗位>]` | 在线简历预览（每日次数有限） |
-| `boss deep-search [岗位关键字]` | 深度搜索列表 / 触发立即匹配 |
+| `boss search [关键词]` | 常规搜索牛人列表 |
+| `boss greet <姓名> [--job <岗位>]` | 在当前推荐/深度搜索页对候选人打招呼（不会自动跳转） |
+| `boss preview <姓名>` | 在线简历预览（每日次数有限） |
+| `boss deep-search [岗位关键字] [--core <要求>] [--bonus <加分项>] [--clear-core] [--clear-bonus] [--match]` | 深度搜索表单状态；`--core` / `--bonus` 可重复，并按传入列表同步分组；`--clear-*` 清空分组；默认不输出候选列表，`--match` 输出最新 20 条 |
 | `boss positions` | 读取职位列表 |
 | `boss jd <名称>` | 抓取职位 JD 缓存到本地 |
 
@@ -92,9 +94,22 @@ boss list --unread
 boss chat 张三
 boss send --text "您好，请问方便发一下简历吗？"
 
-# 4. 推荐页自动打招呼
+# 同名或姓名定位失败时，按 list 序号打开；--unread 对应 list --unread 的序号
+boss chat --index 2 --unread
+boss chat 张三 --index 2 --unread --strict
+
+# 4. 先进入推荐页，再在当前页打招呼
 boss recommend 前端工程师
 boss greet 张三 --job 前端工程师
+
+# 5. 常规搜索牛人
+boss search "langgraph"
+
+# 6. 深度搜索：按传入列表同步分组条件，但不消耗匹配次数
+boss deep-search --core "AI产品经理" --core "做过 RAG 或 Agent 产品落地" --bonus "有 ToB 平台经验"
+
+# 只有明确添加 --match 才会点击「立即匹配」，会消耗今日匹配次数，并只输出最新 20 条
+boss deep-search --match
 ```
 
 ---
@@ -106,10 +121,12 @@ boss-cli 每条命令输出纯文本，适合 LLM 通过子进程编排：
 ```
 1. boss list --unread     → 获取未读候选人
 2. boss chat <姓名>       → 打开会话
+   同名时用 boss chat [姓名] --index <序号> [--unread]
 3. boss action resume     → 索要简历
 4. boss send -t "..."     → 发送消息
 5. boss recommend         → 读取推荐列表
-6. boss greet <姓名>      → 批量打招呼
+6. boss search <关键词>   → 读取常规搜索列表
+7. boss greet <姓名>      → 批量打招呼
 ```
 
 详见 [AGENTS.md](./AGENTS.md)。

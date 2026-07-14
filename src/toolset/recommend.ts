@@ -6,7 +6,7 @@ import {
   sleepRandom,
 } from '../browser/index.js';
 import { withBossSessionPage } from '../common/boss_session_page.js';
-import { clickBossSidebarMenuToPath } from '../common/boss_sidebar_nav.js';
+import { ensurePage } from '../common/ensure_page.js';
 
 const BOSS_CHAT_RECOMMEND_URL = 'https://www.zhipin.com/web/chat/recommend';
 
@@ -48,23 +48,30 @@ export function isBossChatRecommendUrl(url: string): boolean {
 }
 
 async function getRecommendFrame(page: Page): Promise<Frame> {
-  await page.waitForSelector('iframe[name="recommendFrame"]', { timeout: 18_000 });
-  const frameByName = page.frames().find((f) => f.name() === 'recommendFrame') ?? null;
-  if (frameByName) {
-    return frameByName;
+  const timeoutMs = 18_000;
+  const iframe = await page.waitForSelector('iframe[name="recommendFrame"]', {
+    timeout: timeoutMs,
+  });
+  if (!iframe) {
+    throw new Error('未找到推荐 iframe（iframe[name="recommendFrame"]）。');
   }
-  const frameByUrl =
-    page.frames().find((f) => {
-      try {
-        return f.url().includes('/web/frame/recommend');
-      } catch {
-        return false;
-      }
-    }) ?? null;
-  if (frameByUrl) {
-    return frameByUrl;
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const frame = await iframe.contentFrame();
+    if (frame && frame.url().includes('/web/frame/recommend')) {
+      return frame;
+    }
+    await sleepRandom(120, 220);
   }
-  throw new Error('已检测到推荐 iframe，但无法获取其页面上下文（recommendFrame）。');
+
+  const iframeSrc = (await page.evaluate(
+    `(() => document.querySelector('iframe[name="recommendFrame"]')?.getAttribute("src") ?? "")()`,
+  )) as string;
+  const frameUrls = page.frames().map((f) => f.url()).join(' | ');
+  throw new Error(
+    `已检测到推荐 iframe，但无法获取其页面上下文。iframe src：${iframeSrc || 'unknown'}；frames：${frameUrls || 'empty'}`,
+  );
 }
 
 async function ensureRecommendFrameReady(frame: Frame): Promise<void> {
@@ -195,12 +202,11 @@ export async function selectRecommendJob(frame: Frame, keyword: string): Promise
 }
 
 export async function ensureInRecommendPage(page: Page): Promise<Frame> {
-  if (!isBossChatRecommendUrl(page.url())) {
-    await clickBossSidebarMenuToPath(page, '推荐', '/web/chat/recommend');
-  }
-  if (!isBossChatRecommendUrl(page.url())) {
-    throw new Error('通过侧边栏“推荐”进入页面失败，请确认已登录并可访问 /web/chat/recommend。');
-  }
+  await ensurePage(page, {
+    name: '推荐列表页',
+    targetUrl: BOSS_CHAT_RECOMMEND_URL,
+    matches: isBossChatRecommendUrl,
+  });
   const frame = await getRecommendFrame(page);
   await ensureRecommendFrameReady(frame);
   return frame;
@@ -209,13 +215,20 @@ export async function ensureInRecommendPage(page: Page): Promise<Frame> {
 /**
  * 供 `preview` 使用：不导航；若当前主页面不在推荐页或未就绪推荐 iframe，直接抛错。
  */
-export async function assertRecommendPageReadyForPreview(page: Page): Promise<Frame> {
+export async function assertRecommendPageReady(
+  page: Page,
+  actionName: string,
+): Promise<Frame> {
   if (!isBossChatRecommendUrl(page.url())) {
-    throw new Error('当前不在推荐列表页或搜索结果页，无法预览候选人。');
+    throw new Error(`当前不在推荐列表页（/web/chat/recommend），无法${actionName}。`);
   }
   const frame = await getRecommendFrame(page);
   await ensureRecommendFrameReady(frame);
   return frame;
+}
+
+export async function assertRecommendPageReadyForPreview(page: Page): Promise<Frame> {
+  return assertRecommendPageReady(page, '预览候选人');
 }
 
 export async function readRecommendList(frame: Frame): Promise<RecommendCandidate[]> {

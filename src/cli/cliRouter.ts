@@ -10,8 +10,10 @@ import {
   implLogin,
   implListCandidates,
   implListUnreadCandidates,
+  implOpenChatByIndex,
   implListPositions,
   implListPositionsWithOptions,
+  implNormalSearch,
   implOpenChat,
   implRecommend,
   implPreview,
@@ -145,6 +147,9 @@ function printHelp(): void {
       读取「全部」聊天列表候选人；--unread 仅显示未读（角标>0）
   boss chat <姓名> [--strict]
       打开指定联系人会话；默认包含匹配，--strict 为精确匹配
+  boss chat [姓名] --index <序号> [--unread] [--strict]
+      按 boss list 输出的 1-based 序号打开会话；--unread 表示序号对应 boss list --unread
+      同时提供姓名时会校验该序号候选人姓名，--strict 表示精确校验
       仅用于已建立联系的候选人（即在 list 里可见的会话对象）
   boss action <操作> [--remark <备注>]
       仅在当前聊天页已打开候选人详情时执行操作，并只返回 action 执行结果
@@ -160,16 +165,20 @@ function printHelp(): void {
       抓取指定职位详情并缓存到项目目录同名 .md
   boss recommend [岗位关键字]
       进入推荐页并读取推荐列表；带岗位关键字时先在岗位下拉中模糊匹配并切换
-  boss preview <姓名> [--job <岗位关键字>]
-      在线简历预览：须当前已在「推荐」(/web/chat/recommend) 或「深度搜索」(/web/chat/aiform) 且列表已加载；不会自动跳转
+  boss search [关键词] [--job <岗位关键字>]
+      进入「搜索」页并读取 Boss 默认常规搜索结果；带关键词时填入搜索框并回车搜索；
+      带 --job 时先在岗位下拉中模糊匹配并切换到该岗位再搜索
+  boss preview <姓名>
+      在线简历预览：须当前已在「推荐」(/web/chat/recommend)、「深度搜索」(/web/chat/aiform) 或「常规搜索」(/web/chat/search) 且列表已加载；不会自动跳转
       注意：平台对在线简历每日可查看次数有限，请按需使用、谨慎查看
   boss greet <姓名> [--job <岗位关键字>]
-      在「推荐」页（或当前已在 Boss 聊天侧栏打开的、含候选人列表的页面）对列表中的候选人点击“打招呼”
-      可选 --job 先在岗位下拉中模糊匹配并切换（与 recommend / preview 共用同一套选择逻辑）
-      须先在对应页加载出候选人列表
+      须当前已在「推荐」(/web/chat/recommend) 或「深度搜索」(/web/chat/aiform) 且列表已加载；不会自动跳转
+      对当前列表中的候选人点击“打招呼”
+      可选 --job 先在岗位下拉中模糊匹配并切换（与 recommend 共用同一套选择逻辑）
       会消耗打招呼次数且单次成本较高，请谨慎使用
-  boss deep-search [岗位关键字]（别名 deepsearch）
-      进入「深度搜索」页并输出当前匹配结果列表；可选岗位关键字仅切换下拉框。不会点击「立即匹配」
+  boss deep-search [岗位关键字] [--job <岗位关键字>] [--core <核心要求>] [--bonus <加分项>] [--clear-core] [--clear-bonus] [--match]
+      进入「深度搜索」页并输出当前表单、剩余匹配次数和按钮状态；--core/--bonus 可重复，并按传入列表同步对应分组；--clear-* 清空对应分组
+      只有显式提供 --match 时才会点击「立即匹配」并消耗今日匹配次数；--match 输出列表顶部最新 20 条
   
   !!鉴于boss的风控机制存在更新，且本cli的功能在逐步完善中，若遇到部分操作问题，请先检查版本更新
 `);
@@ -223,6 +232,105 @@ function parseOpts(argv: string[]): {
     rest.push(a);
   }
   return { rest, flags, opts };
+}
+
+function splitRequirementArg(value: string): string[] {
+  return value
+    .split(/\r?\n|[;；]/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+function parseDeepSearchArgs(argv: string[]): {
+  jobKeyword?: string;
+  coreRequirements?: string[];
+  bonusRequirements?: string[];
+  match: boolean;
+} {
+  const positional: string[] = [];
+  const coreRequirements: string[] = [];
+  const bonusRequirements: string[] = [];
+  let jobKeyword = '';
+  let match = false;
+  let coreSpecified = false;
+  let bonusSpecified = false;
+
+  function readValue(i: number, key: string): { value: string; nextIndex: number } {
+    const next = argv[i + 1];
+    if (next === undefined || next.startsWith('-')) {
+      die(`❌ deep-search 参数 ${key} 需要提供值`);
+    }
+    return { value: next, nextIndex: i + 1 };
+  }
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === '--match') {
+      match = true;
+      continue;
+    }
+    if (arg === '--clear-core') {
+      coreSpecified = true;
+      coreRequirements.length = 0;
+      continue;
+    }
+    if (arg === '--clear-bonus') {
+      bonusSpecified = true;
+      bonusRequirements.length = 0;
+      continue;
+    }
+    if (arg === '--job' || arg === '-j') {
+      const read = readValue(i, arg);
+      jobKeyword = read.value.trim();
+      i = read.nextIndex;
+      continue;
+    }
+    if (arg.startsWith('--job=')) {
+      jobKeyword = arg.slice('--job='.length).trim();
+      continue;
+    }
+    if (arg === '--core' || arg === '-c') {
+      const read = readValue(i, arg);
+      coreSpecified = true;
+      coreRequirements.push(...splitRequirementArg(read.value));
+      i = read.nextIndex;
+      continue;
+    }
+    if (arg.startsWith('--core=')) {
+      coreSpecified = true;
+      coreRequirements.push(...splitRequirementArg(arg.slice('--core='.length)));
+      continue;
+    }
+    if (arg === '--bonus' || arg === '-b') {
+      const read = readValue(i, arg);
+      bonusSpecified = true;
+      bonusRequirements.push(...splitRequirementArg(read.value));
+      i = read.nextIndex;
+      continue;
+    }
+    if (arg.startsWith('--bonus=')) {
+      bonusSpecified = true;
+      bonusRequirements.push(...splitRequirementArg(arg.slice('--bonus='.length)));
+      continue;
+    }
+    if (arg.startsWith('-')) {
+      die(`❌ deep-search 不支持参数: ${arg}`);
+    }
+    positional.push(arg);
+  }
+
+  if (!jobKeyword && positional.length > 0) {
+    jobKeyword = positional.join(' ').trim();
+  } else if (jobKeyword && positional.length > 0) {
+    die('❌ deep-search 已提供 --job 时，不再支持额外的位置参数');
+  }
+
+  return {
+    jobKeyword: jobKeyword || undefined,
+    coreRequirements: coreSpecified ? coreRequirements : undefined,
+    bonusRequirements: bonusSpecified ? bonusRequirements : undefined,
+    match,
+  };
 }
 
 function printStdout(text: string): void {
@@ -302,15 +410,36 @@ export async function executeCommand(argv: string[]): Promise<string> {
 
   if (cmd === 'chat') {
     const { rest, flags, opts } = parseOpts(tail);
-    const nameArg = rest[0]?.trim();
-    if (!nameArg) {
-      die('❌ 用法: chat <姓名> [--strict]');
-    }
+    const nameArg = rest.join(' ').trim();
     if ((opts.action ?? '').trim().length > 0 || (opts.remark ?? '').trim().length > 0) {
       die('❌ chat 不再支持 --action/--remark。请改用: action <操作> [--remark <备注>]');
     }
+    const allowedOpts = new Set(['index', 'i', 'action', 'remark']);
+    const unsupportedOpts = Object.keys(opts).filter((key) => !allowedOpts.has(key));
+    if (unsupportedOpts.length > 0) {
+      die(`❌ chat 不支持参数: --${unsupportedOpts.join(', --')}`);
+    }
     // 默认模糊匹配（包含）；仅在指定 --strict 时做精确匹配
     const exact = flags.has('strict');
+    const indexRaw = (opts.index ?? opts.i ?? '').trim();
+    if (indexRaw) {
+      const index = Number(indexRaw);
+      if (!Number.isInteger(index) || index < 1) {
+        die(`❌ chat --index 必须是从 1 开始的整数，当前值: ${indexRaw}`);
+      }
+      return implOpenChatByIndex({
+        index,
+        unreadOnly: flags.has('unread'),
+        expectedName: nameArg || undefined,
+        exact,
+      });
+    }
+    if (flags.has('unread')) {
+      die('❌ chat 只有配合 --index 时才支持 --unread。用法: chat --index <序号> --unread');
+    }
+    if (!nameArg) {
+      die('❌ 用法: chat <姓名> [--strict]；或 chat [姓名] --index <序号> [--unread]');
+    }
     return implOpenChat(nameArg, exact);
   }
 
@@ -382,12 +511,21 @@ export async function executeCommand(argv: string[]): Promise<string> {
   }
 
   if (cmd === 'deep-search' || cmd === 'deepsearch') {
+    return implBossSearch(parseDeepSearchArgs(tail));
+  }
+
+  if (cmd === 'search') {
     const { rest, opts, flags } = parseOpts(tail);
-    if (flags.size > 0 || Object.keys(opts).length > 0) {
-      die('❌ 用法: deep-search [岗位关键字]');
+    if (flags.size > 0) {
+      die('❌ 用法: search [关键词] [--job <岗位关键字>]');
     }
-    const jobKeyword = rest.join(' ').trim();
-    return implBossSearch(jobKeyword ? { jobKeyword } : {});
+    const jobKeyword = opts.job?.trim();
+    const extraOpts = Object.keys(opts).filter((k) => k !== 'job');
+    if (extraOpts.length > 0) {
+      die('❌ 用法: search [关键词] [--job <岗位关键字>]');
+    }
+    const keyword = rest.join(' ').trim();
+    return implNormalSearch(keyword || undefined, jobKeyword || undefined);
   }
 
   if (cmd === 'preview') {
@@ -395,22 +533,21 @@ export async function executeCommand(argv: string[]): Promise<string> {
     if (flags.size > 0) {
       die('❌ preview 不支持该 flag');
     }
-    const disallowed = Object.keys(opts).filter((k) => k !== 'job');
-    if (disallowed.length > 0) {
-      die(`❌ preview 不支持: --${disallowed[0]}`);
+    const unsupportedOpts = Object.keys(opts);
+    if (unsupportedOpts.length > 0) {
+      die(`❌ preview 不支持: --${unsupportedOpts[0]}`);
     }
     const candidateTarget = rest.join(' ').trim();
     if (!candidateTarget) {
-      die('❌ 用法: preview <姓名> [--job <岗位关键字>]');
+      die('❌ 用法: preview <姓名>');
     }
-    const jobKeyword = opts.job?.trim();
-    return implPreview({ candidateTarget, jobKeyword: jobKeyword || undefined });
+    return implPreview({ candidateTarget });
   }
 
   if (cmd === 'recommend') {
     const { rest, opts, flags } = parseOpts(tail);
     if (rest[0] === 'preview') {
-      die('❌ 请改用: boss preview <姓名> [--job <岗位关键字>]（已不再使用 recommend preview）');
+      die('❌ 请改用: boss preview <姓名>（已不再使用 recommend preview）');
     }
     if (Object.keys(opts).length > 0 || flags.size > 0) {
       die('❌ 用法: recommend [岗位关键字]');
