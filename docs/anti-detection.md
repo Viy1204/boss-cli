@@ -1,5 +1,13 @@
 # Boss 反自动化检测：防御策略文档
 
+## 2026-07-16 baseline review
+
+- Captured snapshot: `docs/research/boss-online-js/2026-07-16`.
+- Boss index changed from `v10723` to `v10741`; Boss bundle changed from `v6232` to `v6237`; Zhipin sign changed from `v5310` to `v5312`.
+- `risk-detection.js` is byte-for-byte identical to the 2026-07-15 copy after normalizing the `v10723`/`v10741` path. The configured high-risk pattern counts are unchanged, so the existing `*zhipin-boss*risk-detection*` request block remains valid.
+- Zhipin sign `iframe-core.7fa9fa18.js` is unchanged after version-path normalization. The sign `vendors~app` and `app` files were rebundled with new names and hashes, but no new entry-page security host was introduced.
+- Shared Warlock, APM, MQTT, and browser-check assets kept their previous hashes. `src/common/boss_availability.ts` was updated to the new entry URLs and guarded hashes; no `boss_page_guards.ts` strategy change is required.
+
 ## 2026-07-15 baseline review
 
 - Captured snapshot: `docs/research/boss-online-js/2026-07-15`.
