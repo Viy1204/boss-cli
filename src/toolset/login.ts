@@ -9,7 +9,6 @@ import {
   setSessionPage,
   wasLastChromeLaunchHeadless,
 } from '../browser/index.js';
-import { assertBossCliAvailable } from '../common/boss_availability.js';
 
 const BOSS_LOGIN_URL = 'https://www.zhipin.com/web/user/?ka=header-login';
 
@@ -45,8 +44,6 @@ async function pickExistingPage(browser: Browser): Promise<Page | null> {
  * 不做登录态校验/等待/超时判断；成功与否由后续命令自行体现。
  */
 export async function runLogin(): Promise<string> {
-  await assertBossCliAvailable();
-
   // 登录必须可见：即使之前已启动 headless 会话，也需要重启为 headful。
   process.env.BOSS_BROWSER_HEADLESS = 'false';
   const existing = getBrowserRef();

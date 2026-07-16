@@ -12,7 +12,6 @@ import {
 } from '../browser/browser_session.js';
 import { CONTEXT_DESTROY_RETRY_MS } from '../browser/human_delay.js';
 import { sleepRandom } from '../browser/timing.js';
-import { assertBossCliAvailable } from './boss_availability.js';
 import { installBossPageGuards } from './boss_page_guards.js';
 import { withBossSessionLock } from './boss_session_lock.js';
 
@@ -135,7 +134,6 @@ export async function withBossSessionPage<T>(
   callback: (page: Page) => Promise<T>,
   options: BossSessionPageOptions = {},
 ): Promise<T> {
-  await assertBossCliAvailable();
   const shouldEnsureChatShell = options.ensureChatShell !== false;
   const shouldEnsureMenuList = options.ensureMenuList !== false;
 

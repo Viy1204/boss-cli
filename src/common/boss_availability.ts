@@ -148,6 +148,40 @@ function sha256(buffer: Buffer): string {
   return createHash('sha256').update(buffer).digest('hex');
 }
 
+const VERSIONED_SCRIPT_RE = /\/(?:zhipin-boss\/index|zhipin-sign)\/v\d+\//;
+
+function toStableScriptIdentity(url: string): string {
+  return url
+    .replace(VERSIONED_SCRIPT_RE, (segment) => segment.replace(/\/v\d+\//, '/v*/'))
+    .replace(/\/static\/js\/([^/.]+(?:~[^/.]+)?)\.[a-f0-9]{8,}\.js$/i, '/static/js/$1.*.js');
+}
+
+function findCurrentScriptUrl(
+  assetUrls: readonly string[],
+  expectedUrl: string,
+): { url: string | null; reason: string | null } {
+  if (assetUrls.includes(expectedUrl)) {
+    return { url: expectedUrl, reason: null };
+  }
+
+  const expectedIdentity = toStableScriptIdentity(expectedUrl);
+  if (expectedIdentity === expectedUrl) {
+    return { url: null, reason: null };
+  }
+
+  const matches = assetUrls.filter((url) => toStableScriptIdentity(url) === expectedIdentity);
+  if (matches.length === 0) {
+    return { url: null, reason: null };
+  }
+  if (matches.length > 1) {
+    return {
+      url: null,
+      reason: `多个当前脚本匹配同一个已验证身份 ${expectedIdentity}: ${matches.join(', ')}`,
+    };
+  }
+  return { url: matches[0], reason: null };
+}
+
 function formatDisabledMessage(reasons: string[]): string {
   return [
     'Boss CLI 已禁用：Boss 线上前端 JS 与已验证基线不一致。',
@@ -164,10 +198,7 @@ async function assertEntryPageMatches(params: {
   pageLabel: string;
   url: string;
   requiredScripts: readonly string[];
-  versionPath: string;
-  verifiedVersion: string;
-  scriptFamilyLabel: string;
-}): Promise<string[]> {
+}): Promise<{ reasons: string[]; assetUrls: string[] }> {
   try {
     const reasons: string[] = [];
     const { buffer, finalUrl } = await fetchBufferStrict(params.url);
@@ -175,63 +206,61 @@ async function assertEntryPageMatches(params: {
       reasons.push(`${params.pageLabel} 发生跳转：${params.url} -> ${finalUrl}`);
     }
     const assetUrls = extractAssetUrls(buffer.toString('utf8'), params.url);
-    const missingEntryScripts = params.requiredScripts.filter(
-      (url) => !assetUrls.includes(url),
-    );
-    for (const url of missingEntryScripts) {
-      reasons.push(`${params.pageLabel} 缺少已验证脚本：${url}`);
+
+    for (const url of params.requiredScripts) {
+      const current = findCurrentScriptUrl(assetUrls, url);
+      if (current.reason) {
+        reasons.push(`${params.pageLabel} ${current.reason}`);
+        continue;
+      }
+      if (!current.url) {
+        reasons.push(`${params.pageLabel} 缺少已验证脚本：${url}`);
+      }
     }
 
-    const unexpectedScripts = assetUrls.filter(
-      (url) =>
-        url.includes(params.versionPath) &&
-        !url.includes(`${params.versionPath}${params.verifiedVersion}/`),
-    );
-    for (const url of unexpectedScripts) {
-      reasons.push(`${params.pageLabel} 引用了未验证 ${params.scriptFamilyLabel} 脚本：${url}`);
-    }
-    return reasons;
+    return { reasons, assetUrls };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return [`无法读取 ${params.pageLabel} ${params.url}：${msg}`];
+    return { reasons: [`无法读取 ${params.pageLabel} ${params.url}：${msg}`], assetUrls: [] };
   }
 }
 
 export async function assertBossCliAvailable(): Promise<void> {
-  const reasons = [
-    ...(await assertEntryPageMatches({
-      pageLabel: 'Boss 聊天入口页',
-      url: CHECK_ENTRY_URL,
-      requiredScripts: REQUIRED_ENTRY_SCRIPT_URLS,
-      versionPath: '/zhipin-boss/index/',
-      verifiedVersion: VERIFIED_BOSS_INDEX_VERSION,
-      scriptFamilyLabel: 'Boss index',
-    })),
-    ...(await assertEntryPageMatches({
-      pageLabel: 'Boss 登录入口页',
-      url: CHECK_LOGIN_URL,
-      requiredScripts: REQUIRED_LOGIN_SCRIPT_URLS,
-      versionPath: '/zhipin-sign/',
-      verifiedVersion: VERIFIED_ZHIPIN_SIGN_VERSION,
-      scriptFamilyLabel: 'Zhipin sign',
-    })),
-  ];
+  const entryPage = await assertEntryPageMatches({
+    pageLabel: 'Boss 聊天入口页',
+    url: CHECK_ENTRY_URL,
+    requiredScripts: REQUIRED_ENTRY_SCRIPT_URLS,
+  });
+  const loginPage = await assertEntryPageMatches({
+    pageLabel: 'Boss 登录入口页',
+    url: CHECK_LOGIN_URL,
+    requiredScripts: REQUIRED_LOGIN_SCRIPT_URLS,
+  });
+  const reasons = [...entryPage.reasons, ...loginPage.reasons];
+  const currentAssetUrls = [...entryPage.assetUrls, ...loginPage.assetUrls];
 
   if (reasons.length > 0) {
     throw new BossAvailabilityError(formatDisabledMessage(reasons));
   }
 
   for (const guarded of GUARDED_SCRIPT_HASHES) {
+    const current = findCurrentScriptUrl(currentAssetUrls, guarded.url);
+    if (current.reason) {
+      reasons.push(`${guarded.label} ${current.reason}`);
+      continue;
+    }
+
+    const guardedUrl = current.url ?? guarded.url;
     try {
-      const { buffer, finalUrl } = await fetchBufferStrict(guarded.url);
-      if (finalUrl !== guarded.url) {
-        reasons.push(`${guarded.label} 发生跳转：${guarded.url} -> ${finalUrl}`);
+      const { buffer, finalUrl } = await fetchBufferStrict(guardedUrl);
+      if (finalUrl !== guardedUrl) {
+        reasons.push(`${guarded.label} 发生跳转：${guardedUrl} -> ${finalUrl}`);
         continue;
       }
       const actualSha256 = sha256(buffer);
       if (actualSha256 !== guarded.sha256) {
         reasons.push(
-          `${guarded.label} SHA-256 不一致：expected ${guarded.sha256}, actual ${actualSha256}`,
+          `${guarded.label} SHA-256 不一致：url ${guardedUrl}, expected ${guarded.sha256}, actual ${actualSha256}`,
         );
       }
     } catch (e) {

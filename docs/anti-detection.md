@@ -33,6 +33,8 @@
 - Boss index changed from `v10641` to `v10687`; Boss bundle changed from `v6202` to `v6214`; Zhipin sign stayed `v5309`.
 - Same-URL hash changes: 0. Risk pattern categories matched the 2026-07-09 baseline.
 - `src/common/boss_availability.ts` was updated with the new Boss index and bundle entry scripts plus guarded hashes.
+- Availability checks now resolve versioned entry scripts by stable script identity before hashing, so a version-directory or chunk-fingerprint change no longer disables the CLI by itself.
+- Runtime commands do not run the online availability check automatically; use it only for release review or manual diagnostics to avoid extra Boss entry-page requests during normal operation.
 - `src/common/boss_page_guards.ts` request guards still cover the observed risk/security/report URLs in this snapshot.
 
 ## 2026-07-09 baseline review
