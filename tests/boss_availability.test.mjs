@@ -8,7 +8,7 @@ import {
   BossAvailabilityError,
 } from '../dist/common/boss_availability.js';
 
-const SNAPSHOT_ROOT = path.resolve('docs/research/boss-online-js/2026-07-16');
+const SNAPSHOT_ROOT = path.resolve('docs/research/boss-online-js/2026-07-17');
 const manifest = JSON.parse(await readFile(path.join(SNAPSHOT_ROOT, 'manifest.json'), 'utf8'));
 const entryPageByUrl = new Map(manifest.entryPages.map((entry) => [entry.url, entry]));
 const assetByUrl = new Map(manifest.entries.map((entry) => [entry.url, entry]));
@@ -41,13 +41,13 @@ test.afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-test('accepts the archived 2026-07-16 Boss frontend snapshot', async () => {
+test('accepts the archived 2026-07-17 Boss frontend snapshot', async () => {
   installSnapshotFetch();
   await assert.doesNotReject(assertBossCliAvailable());
 });
 
 test('rejects a guarded script whose archived hash changes', async () => {
-  const guardedUrl = 'https://static.zhipin.com/zhipin-boss/index/v10741/static/js/app.js';
+  const guardedUrl = 'https://static.zhipin.com/zhipin-boss/index/v10753/static/js/app.js';
   installSnapshotFetch({ corruptUrl: guardedUrl });
   await assert.rejects(
     assertBossCliAvailable(),

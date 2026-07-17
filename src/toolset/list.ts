@@ -127,7 +127,9 @@ export async function runGetCandidateList(
 
   try {
     return await withBossSessionPage(async (page) => {
-      await ensureChatListReady(page, unreadOnly ? 'unread' : 'all');
+      // 始终加载「全部」列表再在客户端按未读角标过滤：
+      // Boss v10718+ 改版后「未读」筛选 tab 点击失效/筛出空列表，不能依赖平台过滤。
+      await ensureChatListReady(page, 'all');
 
       const items = (await page.evaluate(
         `(() => {
@@ -150,7 +152,9 @@ export async function runGetCandidateList(
 
       const candidates = items.filter((it) => it.name) as CandidateItem[];
       const withUnread = candidates.filter((it) => it.unreadCount > 0).length;
-      const visible = unreadOnly ? candidates : candidates;
+      const visible = unreadOnly
+        ? candidates.filter((it) => it.unreadCount > 0)
+        : candidates;
       const lines = visible.map((it, idx) => {
         const base = `${idx + 1}. ${it.name}${it.job ? `｜${it.job}` : ''}`;
         const meta = [
@@ -167,7 +171,7 @@ export async function runGetCandidateList(
 
       return [
         unreadOnly
-          ? `未读筛选：共 ${visible.length} 人（已切换页面「未读」筛选）。`
+          ? `未读筛选：共 ${visible.length} 人（从全量列表按未读角标筛选）。`
           : `沟通列表共 ${candidates.length} 人，其中 ${withUnread} 人有未读消息。`,
         previewText,
       ]
