@@ -12,7 +12,7 @@ import {
 } from '../browser/browser_session.js';
 import { CONTEXT_DESTROY_RETRY_MS } from '../browser/human_delay.js';
 import { sleepRandom } from '../browser/timing.js';
-import { installBossPageGuards } from './boss_page_guards.js';
+import { getBossPageRiskState, installBossPageGuards } from './boss_page_guards.js';
 import { withBossSessionLock } from './boss_session_lock.js';
 
 const SHOULD_DISABLE_JS =
@@ -86,6 +86,27 @@ async function readMenuListSnapshot(page: Page): Promise<MenuListSnapshot> {
  * 已经在 `/web/chat/recommend`、`/web/chat/aiform` 等主壳子页时直接跳过 goto，
  * 避免触发"先回到聊天页再切回业务页"的额外跳转。
  */
+/** 页面守卫熔断（风控页反弹 / 自刷新循环）导致的中止，与普通页面异常区分开。 */
+export class BossPageRiskError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BossPageRiskError';
+  }
+}
+
+/**
+ * 熔断后立刻停下：继续自动操作既拿不到正确页面，也会让风控进一步升级。
+ * 错误信息直接给出人工处置动作。
+ */
+function assertNoPageRisk(page: Page): void {
+  const risk = getBossPageRiskState(page);
+  if (!risk) return;
+  throw new BossPageRiskError(
+    `${risk.message}\n处理方式：在浏览器中完成验证/重新登录，确认能正常停留在沟通页后再重试；` +
+      `若确认无需拦截，可设 BOSS_BROWSER_ALLOW_RISK_NAV=1 让验证页直接渲染。`,
+  );
+}
+
 async function ensureBossChatShellUrlBeforeMenuList(page: Page): Promise<void> {
   if (isBossChatShellUrl(page.url())) {
     return;
@@ -150,6 +171,7 @@ export async function withBossSessionPage<T>(
     const maxAttempts = 2;
     let lastErr: unknown;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let page: Page | null = null;
     try {
       await ensureBrowserSession();
       const browser = getBrowserRef();
@@ -157,7 +179,7 @@ export async function withBossSessionPage<T>(
         throw new Error('无法获取浏览器实例。');
       }
 
-      let page: Page | null = getPageRef();
+      page = getPageRef();
       if (!page || page.isClosed()) {
         page = (await pickExistingPage(browser)) ?? (await browser.newPage());
       }
@@ -169,16 +191,27 @@ export async function withBossSessionPage<T>(
       if (shouldEnsureChatShell) {
         await ensureBossChatShellUrlBeforeMenuList(page);
       }
+      assertNoPageRisk(page);
       if (SHOULD_DISABLE_JS) {
         await page.setJavaScriptEnabled(false);
       }
       if (shouldEnsureMenuList) {
-        await ensureMenuListMountedAfterLoad(page);
+        try {
+          await ensureMenuListMountedAfterLoad(page);
+        } catch (e) {
+          // 主壳加载不出来时，风控熔断信息比「未出现侧栏」更能定位问题。
+          assertNoPageRisk(page);
+          throw e;
+        }
       }
 
       return await callback(page);
     } catch (e) {
       lastErr = e;
+      // 守卫熔断时，把「上下文被销毁」这类次生错误换成风控原因，并且不再重试。
+      if (page && !(e instanceof BossPageRiskError)) {
+        assertNoPageRisk(page);
+      }
       if (attempt < maxAttempts - 1 && isContextDestroyed(e)) {
         // Boss 页面偶发跳转/重渲染会销毁执行上下文；短暂等待并重试一次即可。
         await sleepRandom(CONTEXT_DESTROY_RETRY_MS.min, CONTEXT_DESTROY_RETRY_MS.max);
