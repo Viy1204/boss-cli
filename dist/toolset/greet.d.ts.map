@@ -1,0 +1,1 @@
+{"version":3,"file":"greet.d.ts","sourceRoot":"","sources":["../../src/toolset/greet.ts"],"names":[],"mappings":"AAsDA,MAAM,MAAM,YAAY,GAAG;IACzB,eAAe,EAAE,MAAM,CAAC;IACxB,UAAU,CAAC,EAAE,MAAM,CAAC;CACrB,CAAC;AAEF,wBAAsB,iBAAiB,CAAC,OAAO,EAAE,YAAY,GAAG,OAAO,CAAC,MAAM,CAAC,CAyD9E"}
