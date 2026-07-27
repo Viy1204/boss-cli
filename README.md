@@ -43,17 +43,22 @@ npm install -g @joohw/boss-cli@latest
 boss help
 ```
 
-### 安装本 fork（含尚未发到 npm 的修复）
+### 安装本 fork（含尚未进入上游的修复）
 
-本仓库是 `joohw/boss-cli` 的 fork，包含风控页反弹熔断等尚未进入上游发布的修复。npm 上的
-`@joohw/boss-cli` 不含这些改动，装 fork 版走 tarball：
+本仓库是 [`joohw/boss-cli`](https://github.com/joohw/boss-cli) 的 fork，包含风控页反弹熔断等
+上游尚未发布的修复，以 `@viyzhu/boss-cli` 单独发布：
 
 ```bash
-npm install -g https://github.com/Viy1204/boss-cli/archive/refs/heads/main.tar.gz
+npm install -g @viyzhu/boss-cli@latest
 boss version
 ```
 
-装好后 `boss update` 会继续从本 fork 更新，不会退回 npm 上游版本。
+两个包提供同名的 `boss` 命令，**不要同时装**；换装前先 `npm uninstall -g @joohw/boss-cli`。
+也可以直接装仓库 tarball（等价于 main 最新提交）：
+
+```bash
+npm install -g https://github.com/Viy1204/boss-cli/archive/refs/heads/main.tar.gz
+```
 
 > 别用 `npm i -g github:Viy1204/boss-cli`：npm 会把全局包链到 npm cache 里的临时 clone，
 > 缓存清理后 `boss` 直接 `Cannot find module`。

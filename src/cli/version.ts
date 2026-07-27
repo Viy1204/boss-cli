@@ -67,14 +67,6 @@ type CheckPackageUpdateOptions = {
   statePath?: string;
 };
 
-/**
- * 本 fork 的分发渠道：npm 上的 `@joohw/boss-cli` 是上游版本，不含本仓库的修复，
- * 因此版本检查与 `boss update` 都指向 fork 的 main，而不是 npm registry。
- */
-const FORK_TARBALL_URL = 'https://github.com/Viy1204/boss-cli/archive/refs/heads/main.tar.gz';
-const FORK_PACKAGE_JSON_URL =
-  'https://raw.githubusercontent.com/Viy1204/boss-cli/main/package.json';
-
 export async function fetchNpmLatestVersion(packageName: string): Promise<string> {
   const path = `${encodeURIComponent(packageName)}/latest`;
   const url = `https://registry.npmjs.org/${path}`;
@@ -87,20 +79,6 @@ export async function fetchNpmLatestVersion(packageName: string): Promise<string
   const data = (await res.json()) as { version?: unknown };
   if (typeof data.version !== 'string' || data.version.length === 0) {
     throw new Error('npm registry 响应缺少有效的 version 字段');
-  }
-  return data.version;
-}
-
-export async function fetchForkLatestVersion(): Promise<string> {
-  const res = await fetch(FORK_PACKAGE_JSON_URL, {
-    headers: { Accept: 'application/json' },
-  });
-  if (!res.ok) {
-    throw new Error(`查询 fork 最新版本失败：HTTP ${res.status}（${FORK_PACKAGE_JSON_URL}）`);
-  }
-  const data = (await res.json()) as { version?: unknown };
-  if (typeof data.version !== 'string' || data.version.length === 0) {
-    throw new Error('fork package.json 缺少有效的 version 字段');
   }
   return data.version;
 }
@@ -172,7 +150,7 @@ export async function checkPackageUpdate(
   const now = options.now ?? new Date();
   const intervalMs = options.intervalMs ?? UPDATE_CHECK_INTERVAL_MS;
   const statePath = options.statePath ?? getUpdateCheckStatePath();
-  const fetchLatestVersion = options.fetchLatestVersion ?? (() => fetchForkLatestVersion());
+  const fetchLatestVersion = options.fetchLatestVersion ?? fetchNpmLatestVersion;
   const state = await readUpdateCheckState(statePath);
 
   if (!options.force && !shouldCheckFromState(state, now, intervalMs)) {
@@ -220,16 +198,15 @@ export async function printVersionInfo(): Promise<void> {
   if (result.updateAvailable) {
     console.log(formatPackageUpdateNotice(result));
   } else if (result.latest) {
-    console.log(`未发现更新：当前 ${result.current}，fork latest ${result.latest}`);
+    console.log(`未发现更新：当前 ${result.current}，npm latest ${result.latest}`);
   }
 }
 
 export async function runPackageUpdate(): Promise<string> {
+  const { name } = getPackageMeta();
   const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  // 走 tarball 而不是 `npm i -g <git-url>`：后者在 Windows/nvm4w 下会把全局包链到
-  // npm cache 里的临时 clone，缓存清理后 `boss` 直接 module not found。
-  const args = ['install', '-g', FORK_TARBALL_URL];
-  console.error(`[boss-cli] 正在执行：npm install -g ${FORK_TARBALL_URL}`);
+  const args = ['install', '-g', `${name}@latest`];
+  console.error(`[boss-cli] 正在执行：npm install -g ${name}@latest`);
 
   const code = await new Promise<number>((resolve, reject) => {
     const child = spawn(npmCommand, args, {

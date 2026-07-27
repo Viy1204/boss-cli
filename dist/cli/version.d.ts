@@ -20,7 +20,6 @@ type CheckPackageUpdateOptions = {
     statePath?: string;
 };
 export declare function fetchNpmLatestVersion(packageName: string): Promise<string>;
-export declare function fetchForkLatestVersion(): Promise<string>;
 export declare function formatPackageUpdateNotice(result: PackageUpdateCheckResult): string;
 export declare function checkPackageUpdate(options?: CheckPackageUpdateOptions): Promise<PackageUpdateCheckResult>;
 export declare function printPackageUpdateNoticeIfDue(): Promise<void>;
