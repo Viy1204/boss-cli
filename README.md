@@ -46,10 +46,10 @@ boss help
 ### 安装本 fork（含尚未进入上游的修复）
 
 本仓库是 [`joohw/boss-cli`](https://github.com/joohw/boss-cli) 的 fork，包含风控页反弹熔断等
-上游尚未发布的修复，以 `@viyzhu/boss-cli` 单独发布：
+上游尚未发布的修复，以 `@viyzhu/boss-cli-fork` 单独发布：
 
 ```bash
-npm install -g @viyzhu/boss-cli@latest
+npm install -g @viyzhu/boss-cli-fork@latest
 boss version
 ```
 
