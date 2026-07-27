@@ -47,7 +47,6 @@
   ],
   "scripts": {
     "build": "tsc",
-    "prepare": "npm run build",
     "dev": "npm run build && node dist/cli/index.js",
     "deploy": "node scripts/deploy.mjs",
     "test": "npm run build && node --test tests/*.test.mjs",
