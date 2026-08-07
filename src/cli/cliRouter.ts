@@ -176,6 +176,13 @@ function printHelp(): void {
       对当前列表中的候选人点击“打招呼”
       可选 --job 先在岗位下拉中模糊匹配并切换（与 recommend 共用同一套选择逻辑）
       会消耗打招呼次数且单次成本较高，请谨慎使用
+  boss greet [关键词] --index <序号> [--job <岗位关键字>] [--dry-run]
+      当前在「常规搜索/搜索池」(/web/chat/search) 时生效；须先跑 boss search 加载列表
+      搜索池姓名被平台打码（崔**），建议用 --index 按 boss search 输出的序号定位（仅当次列表有效）；
+      也可传打码姓名或摘要关键词模糊匹配（命中多人会报错并列出候选）
+      点卡片「畅聊卡 N/M」后平台会弹「选择该牛人开聊职位」确认层，--job 可在弹层内改选职位
+      --dry-run：只走到弹层并点「取消」，不发出招呼、不消耗畅聊卡（用于验证定位是否正确）
+      不带 --dry-run 时会点确认、消耗一张搜索畅聊卡，且不可撤回
   boss deep-search [岗位关键字] [--job <岗位关键字>] [--core <核心要求>] [--bonus <加分项>] [--clear-core] [--clear-bonus] [--match]
       进入「深度搜索」页并输出当前表单、剩余匹配次数和按钮状态；--core/--bonus 可重复，并按传入列表同步对应分组；--clear-* 清空对应分组
       只有显式提供 --match 时才会点击「立即匹配」并消耗今日匹配次数；--match 输出列表顶部最新 20 条
@@ -558,19 +565,37 @@ export async function executeCommand(argv: string[]): Promise<string> {
 
   if (cmd === 'greet') {
     const { rest, opts, flags } = parseOpts(tail);
-    if (flags.size > 0) {
-      die('❌ 用法: greet <姓名> [--job <岗位关键字>]');
+    const usage =
+      '❌ 用法: greet <姓名> [--job <岗位关键字>]；搜索池: greet [关键词] --index <序号> [--dry-run]';
+    const allowedFlags = new Set(['dry-run', 'dryrun']);
+    const badFlags = Array.from(flags).filter((f) => !allowedFlags.has(f));
+    if (badFlags.length > 0) {
+      die(usage);
     }
     const jobKeyword = opts.job?.trim();
-    const extraOpts = Object.keys(opts).filter((k) => k !== 'job');
+    const extraOpts = Object.keys(opts).filter((k) => k !== 'job' && k !== 'index' && k !== 'i');
     if (extraOpts.length > 0) {
-      die('❌ 用法: greet <姓名> [--job <岗位关键字>]');
+      die(usage);
+    }
+    const indexRaw = (opts.index ?? opts.i ?? '').trim();
+    let index: number | undefined;
+    if (indexRaw) {
+      const n = Number(indexRaw);
+      if (!Number.isInteger(n) || n < 1) {
+        die(`❌ greet --index 必须是从 1 开始的整数，当前值: ${indexRaw}`);
+      }
+      index = n;
     }
     const target = rest.join(' ').trim();
-    if (!target) {
-      die('❌ 用法: greet <姓名> [--job <岗位关键字>]');
+    if (!target && index === undefined) {
+      die(usage);
     }
-    return implRecommendGreet({ candidateTarget: target, jobKeyword: jobKeyword || undefined });
+    return implRecommendGreet({
+      candidateTarget: target,
+      jobKeyword: jobKeyword || undefined,
+      index,
+      dryRun: flags.has('dry-run') || flags.has('dryrun'),
+    });
   }
 
   die(`❌ 未知命令 “${argv[0]}”。输入 help 查看用法。`);

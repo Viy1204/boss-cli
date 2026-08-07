@@ -4,6 +4,7 @@ import { closeBossPaywallPopupIfPresent, describeBossPaywallPopupIfPresent, wait
 import { withBossSessionPage } from '../common/boss_session_page.js';
 import { clickGreetDeepSearch, ensureInDeepSearchPage, isBossChatAiFormUrl, readDeepSearchGeekList, renderGeekListSection, selectAiFormJob, } from './deep-search.js';
 import { clickGreet, assertRecommendPageReady, markGreetProduced, readRecommendList, renderRecommendList, selectRecommendJob, } from './recommend.js';
+import { greetSearchPoolOnPage, isBossChatSearchUrl } from './normal-search.js';
 /** 打招呼前临时拉高父页视口，使 iframe 内更多卡片进入 DOM（与 recommend 列表读取已解耦）。 */
 const RECOMMEND_GREET_EXPAND_HEIGHT_PX = 3000;
 const RECOMMEND_GREET_EXPAND_SETTLE_MS = { min: 600, max: 1400 };
@@ -25,13 +26,26 @@ async function cleanupGreetModalIfPresent(page) {
 export async function runRecommendGreet(options) {
     const t = options.candidateTarget.trim();
     const kw = (options.jobKeyword ?? '').trim();
-    if (!t) {
-        throw new Error('请提供打招呼目标（姓名）。');
+    if (!t && options.index === undefined) {
+        throw new Error('请提供打招呼目标（姓名），或在搜索池用 --index <序号>。');
     }
     try {
         return await withBossSessionPage(async (page) => {
             await closeBossModalIfPresent(page);
             const url = page.url();
+            // 搜索池（/web/chat/search）是另一套机制：按钮为「畅聊卡 N/M」，点后弹职位确认层，
+            // 且姓名被平台打码，因此支持 --index 按卡片序号定位。
+            if (isBossChatSearchUrl(url)) {
+                return greetSearchPoolOnPage(page, {
+                    index: options.index,
+                    target: t || undefined,
+                    jobKeyword: kw || undefined,
+                    dryRun: options.dryRun === true,
+                });
+            }
+            if (!t) {
+                throw new Error('请提供打招呼目标（姓名）。');
+            }
             if (isBossChatAiFormUrl(url)) {
                 await ensureInDeepSearchPage(page);
                 let jobLine = '';

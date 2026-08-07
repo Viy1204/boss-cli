@@ -43,6 +43,8 @@ export declare function implPreview(opts: {
 export declare function implRecommendGreet(opts: {
     candidateTarget: string;
     jobKeyword?: string;
+    index?: number;
+    dryRun?: boolean;
 }): Promise<string>;
 export { implSetBaiduCredentials } from './baidu_credentials.js';
 //# sourceMappingURL=index.d.ts.map

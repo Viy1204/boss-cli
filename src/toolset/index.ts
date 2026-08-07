@@ -119,6 +119,8 @@ export async function implPreview(opts: {
 export async function implRecommendGreet(opts: {
   candidateTarget: string;
   jobKeyword?: string;
+  index?: number;
+  dryRun?: boolean;
 }): Promise<string> {
   return runRecommendGreet(opts);
 }

@@ -50,9 +50,27 @@ export function isBossChatAiFormUrl(url: string): boolean {
   }
 }
 
+/**
+ * Boss 已下线 `/web/chat/aiform`：直接 goto 会被重定向回 `/web/chat/index`，
+ * 深搜搬到了 `/web/chat/search/ai`（内容在 `iframe[name=searchAiIframe]` → `/web/frame/search/ai`）。
+ * 本模块尚未迁移到新页，这里把「等选择器超时」换成能看懂的说明，避免报 18000ms exceeded 误导排查。
+ */
+function assertStillOnAiForm(page: Page): void {
+  const url = page.url();
+  if (!isBossChatAiFormUrl(url)) {
+    throw new Error(
+      `深度搜索页 /web/chat/aiform 已被 Boss 下线（当前被重定向到 ${url}）。` +
+        '新版深搜在 /web/chat/search/ai（iframe[name=searchAiIframe]），boss-cli 尚未迁移，' +
+        'deep-search 暂不可用；请先在网页端手动使用深度搜索。',
+    );
+  }
+}
+
 async function waitForAiFormReady(page: Page): Promise<void> {
-  await page.waitForFunction(
-    `(() => {
+  assertStillOnAiForm(page);
+  try {
+    await page.waitForFunction(
+      `(() => {
       const root = document.querySelector(".ai-form-left");
       const submit = document.querySelector(".ai-form-match-footer .btn-ai-match-v2");
       const selected = document.querySelector(".job-dropmenu-select .job-main-text");
@@ -62,8 +80,13 @@ async function waitForAiFormReady(page: Page): Promise<void> {
       const text = (selected.textContent ?? "").replace(/\\s+/g, " ").trim();
       return text.length > 0;
     })()`,
-    { timeout: 18_000 },
-  );
+      { timeout: 18_000 },
+    );
+  } catch (e) {
+    // 等待期间被重定向走是最常见的失败形态，优先给出这条更准确的解释
+    assertStillOnAiForm(page);
+    throw e;
+  }
 }
 
 export async function ensureInDeepSearchPage(page: Page): Promise<void> {

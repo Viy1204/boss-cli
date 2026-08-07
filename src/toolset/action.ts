@@ -512,7 +512,10 @@ async function captureOnlineResumeScreenshot(page: Page, candidateLabel: string)
   const savedViewport = await snapshotBossPageViewport(page);
 
   const opened = await page.evaluate(() => {
-    const a = document.querySelector('a.resume-btn-online') as HTMLAnchorElement | null;
+    // 2026-07 改版：「在线简历」由 <a> 改成 <button>，只认 a.resume-btn-online 会取不到
+    const a = document.querySelector(
+      'a.resume-btn-online, .resume-btn-online',
+    ) as HTMLElement | null;
     if (!a || a.classList.contains('disabled')) return false;
     a.scrollIntoView({ block: 'center', inline: 'nearest' });
     a.click();

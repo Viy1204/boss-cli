@@ -11,6 +11,29 @@ import { ensureChatListReady } from './list.js';
 
 type ChatFrom = 'friend' | 'myself' | 'system' | 'unknown';
 
+/**
+ * 从 `.geek-item-wrap` 向上找会话列表的滚动容器，注入后可直接用局部变量 `scroller`（可能为 null）。
+ * Boss 现版本的列表容器是 `.user-list.b-scroll-stable`，`overflow-y: hidden` + 自绘滚动条，
+ * 因此不能只认 `auto/scroll`——那样会判定不到滚动容器，导致只能扫到首屏 40 条会话
+ * （实测该账号实际有 380 条）。改为「非 visible 且真的可滚」来识别。
+ */
+const CHAT_LIST_SCROLLER_JS = `
+        const first = document.querySelector(".geek-item-wrap");
+        let scroller = null;
+        let node = first ? first.parentElement : null;
+        while (node) {
+          const overflowY = window.getComputedStyle(node).overflowY;
+          if (
+            overflowY !== "visible" &&
+            node.scrollHeight > node.clientHeight + 2 &&
+            node.clientHeight > 100
+          ) {
+            scroller = node;
+            break;
+          }
+          node = node.parentElement;
+        }`;
+
 function chatRoleTag(from: ChatFrom): string {
   switch (from) {
     case 'friend':
@@ -572,7 +595,9 @@ export async function runOpenCandidateChat(
     let targetWrap: Awaited<ReturnType<typeof page.$>> | null = null;
     let foundName = '';
 
-    const maxScrollRounds = 40;
+    const maxScrollRounds = 120;
+    // 到底后还要给懒加载留时间：连续 3 轮滚不动才算真到底
+    let stuckRounds = 0;
     for (let round = 0; round < maxScrollRounds && !targetWrap; round++) {
       const wraps = await page.$$('.geek-item-wrap');
       for (const wrap of wraps) {
@@ -589,33 +614,31 @@ export async function runOpenCandidateChat(
       }
       if (targetWrap) break;
 
-      const scrollState = (await page.evaluate(`(() => {
-        const first = document.querySelector(".geek-item-wrap");
-        if (!first) return { moved: false, atEnd: true };
-        let node = first.parentElement;
-        let scroller = null;
-        while (node) {
-          const style = window.getComputedStyle(node);
-          const overflowY = style.overflowY;
-          const canScroll =
-            (overflowY === "auto" || overflowY === "scroll") &&
-            node.scrollHeight > node.clientHeight;
-          if (canScroll) {
-            scroller = node;
-            break;
-          }
-          node = node.parentElement;
-        }
-        if (!scroller) return { moved: false, atEnd: true };
+      const scrollState = (await page.evaluate(
+        `(() => {${CHAT_LIST_SCROLLER_JS}
+        if (!scroller) return { moved: false, atEnd: true, noScroller: true };
         const prev = scroller.scrollTop;
         const step = Math.max(160, Math.floor(scroller.clientHeight * 0.8));
         scroller.scrollTop = Math.min(scroller.scrollTop + step, scroller.scrollHeight);
         const moved = scroller.scrollTop !== prev;
         const atEnd = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2;
         return { moved, atEnd };
-      })()`)) as { moved: boolean; atEnd: boolean };
-      if (!scrollState.moved || scrollState.atEnd) {
+      })()`,
+      )) as { moved: boolean; atEnd: boolean; noScroller?: boolean };
+      if (scrollState.noScroller) {
         break;
+      }
+      if (!scrollState.moved) {
+        stuckRounds += 1;
+        if (stuckRounds >= 3) {
+          break;
+        }
+      } else {
+        stuckRounds = 0;
+      }
+      // 触底时多等一会儿，等后续会话懒加载进来再继续扫
+      if (scrollState.atEnd) {
+        await sleepRandom(700, 1100);
       }
       await sleepRandom(OPEN_CHAT_SCROLL_GAP_MS.min, OPEN_CHAT_SCROLL_GAP_MS.max);
     }
@@ -638,12 +661,13 @@ export async function runOpenCandidateChat(
       let node = row.parentElement;
       let scroller = null;
       while (node) {
-        const style = window.getComputedStyle(node);
-        const overflowY = style.overflowY;
-        const canScroll =
-          (overflowY === "auto" || overflowY === "scroll") &&
-          node.scrollHeight > node.clientHeight;
-        if (canScroll) {
+        // 同 CHAT_LIST_SCROLLER_JS：Boss 列表容器是 overflow-y:hidden + 自绘滚动条
+        const overflowY = window.getComputedStyle(node).overflowY;
+        if (
+          overflowY !== "visible" &&
+          node.scrollHeight > node.clientHeight + 2 &&
+          node.clientHeight > 100
+        ) {
           scroller = node;
           break;
         }
