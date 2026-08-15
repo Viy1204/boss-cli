@@ -28,6 +28,7 @@ import {
   renderRecommendList,
   selectRecommendJob,
 } from './recommend.js';
+import { greetSearchPoolOnPage, isBossChatSearchUrl } from './normal-search.js';
 import type { Page } from 'puppeteer-core';
 
 /** 打招呼前临时拉高父页视口，使 iframe 内更多卡片进入 DOM（与 recommend 列表读取已解耦）。 */
@@ -55,18 +56,35 @@ async function cleanupGreetModalIfPresent(page: Page): Promise<void> {
 export type GreetOptions = {
   candidateTarget: string;
   jobKeyword?: string;
+  /** 搜索池按卡片序号定位（姓名被平台打码时用） */
+  index?: number;
+  /** 搜索池：只走到确认弹层就取消，不消耗畅聊卡 */
+  dryRun?: boolean;
 };
 
 export async function runRecommendGreet(options: GreetOptions): Promise<string> {
   const t = options.candidateTarget.trim();
   const kw = (options.jobKeyword ?? '').trim();
-  if (!t) {
-    throw new Error('请提供打招呼目标（姓名）。');
+  if (!t && options.index === undefined) {
+    throw new Error('请提供打招呼目标（姓名），或在搜索池用 --index <序号>。');
   }
   try {
     return await withBossSessionPage(async (page) => {
       await closeBossModalIfPresent(page);
       const url = page.url();
+      // 搜索池（/web/chat/search）是另一套机制：按钮为「畅聊卡 N/M」，点后弹职位确认层，
+      // 且姓名被平台打码，因此支持 --index 按卡片序号定位。
+      if (isBossChatSearchUrl(url)) {
+        return greetSearchPoolOnPage(page, {
+          index: options.index,
+          target: t || undefined,
+          jobKeyword: kw || undefined,
+          dryRun: options.dryRun === true,
+        });
+      }
+      if (!t) {
+        throw new Error('请提供打招呼目标（姓名）。');
+      }
       if (isBossChatAiFormUrl(url)) {
         await ensureInDeepSearchPage(page);
         let jobLine = '';

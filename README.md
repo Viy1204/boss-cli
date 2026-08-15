@@ -43,6 +43,26 @@ npm install -g @joohw/boss-cli@latest
 boss help
 ```
 
+### 安装本 fork（含尚未进入上游的修复）
+
+本仓库是 [`joohw/boss-cli`](https://github.com/joohw/boss-cli) 的 fork，包含风控页反弹熔断等
+上游尚未发布的修复，以 `@viyzhu/boss-cli-fork` 单独发布：
+
+```bash
+npm install -g @viyzhu/boss-cli-fork@latest
+boss version
+```
+
+两个包提供同名的 `boss` 命令，**不要同时装**；换装前先 `npm uninstall -g @joohw/boss-cli`。
+也可以直接装仓库 tarball（等价于 main 最新提交）：
+
+```bash
+npm install -g https://github.com/Viy1204/boss-cli/archive/refs/heads/main.tar.gz
+```
+
+> 别用 `npm i -g github:Viy1204/boss-cli`：npm 会把全局包链到 npm cache 里的临时 clone，
+> 缓存清理后 `boss` 直接 `Cannot find module`。
+
 如果你觉得 boss-cli 好用，欢迎给本仓库一个 Star；使用中遇到问题请提交 Issue，新功能或改进也欢迎提交 PR。
 
 > **macOS / Linux 权限问题**：系统 Node 默认全局前缀在 `/usr/local`，当前账户无写权限。建议先把全局前缀挪到用户目录（一次性配置）：

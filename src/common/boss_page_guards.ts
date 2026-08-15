@@ -32,6 +32,14 @@ const REPORT_REQUEST_PATTERNS = [
 ] as const;
 
 /**
+ * 设为 `true` / `1` 时完全不拦截风险页导航（403 / verify / security-check）：
+ * Boss 真的要求人工验证时，让验证页正常渲染，用户手动完成后再跑命令。
+ */
+const SHOULD_ALLOW_RISK_NAV =
+  process.env.BOSS_BROWSER_ALLOW_RISK_NAV === 'true' ||
+  process.env.BOSS_BROWSER_ALLOW_RISK_NAV === '1';
+
+/**
  * `about:blank` 是浏览器内置 URL，不会进入 CDP 网络拦截，因此不放在 Fetch.enable 模式里；
  * 该路径只能靠页面内 Location 守卫与 framenavigated 兜底处理。
  */
@@ -403,6 +411,58 @@ const pagesWithInitGuard = new WeakSet<Page>();
 const pagesWithNavigationGuard = new WeakSet<Page>();
 const pagesWithRequestGuard = new WeakSet<Page>();
 
+/**
+ * 风控页反弹熔断：Boss 判定风控后会反复把主 frame 推向 verify / 403 页，
+ * 而拦截 + 跳回沟通页会把「一次风控」放大成「无限刷新」。
+ * 窗口期内反弹超过阈值即熔断：停止反弹、放行验证页、由命令层报错停下来。
+ */
+const RISK_BOUNCE_WINDOW_MS = 60_000;
+const RISK_BOUNCE_LIMIT = 3;
+
+/** 同一 URL 在窗口期内反复 commit（Boss 自身 reload 循环，常见于安全脚本被拦后 SPA 自救）。 */
+const RELOAD_LOOP_WINDOW_MS = 15_000;
+const RELOAD_LOOP_LIMIT = 5;
+
+export type BossPageRiskKind = 'risk_navigation' | 'reload_loop';
+
+export type BossPageRiskState = {
+  kind: BossPageRiskKind;
+  url: string;
+  message: string;
+};
+
+const riskStateByPage = new WeakMap<Page, BossPageRiskState>();
+const cdpSessionByPage = new WeakMap<Page, CDPSession>();
+
+/** 当前页是否已熔断（风控页反弹 / 刷新循环）；命令层据此明确报错而不是继续空转。 */
+export function getBossPageRiskState(page: Page): BossPageRiskState | null {
+  return riskStateByPage.get(page) ?? null;
+}
+
+/** 用户手动处理完验证后，可清掉熔断状态继续跑。 */
+export function clearBossPageRiskState(page: Page): void {
+  riskStateByPage.delete(page);
+}
+
+/** 熔断后放开风险页拦截，让 verify / security-check 正常渲染，用户才能手动过验证。 */
+async function relaxRiskNavigationBlocking(page: Page): Promise<void> {
+  const cdp = cdpSessionByPage.get(page);
+  if (!cdp) return;
+  await cdp
+    .send('Fetch.enable', {
+      patterns: [...BLOCKED_SECURITY_SCRIPT_PATTERNS, ...REPORT_REQUEST_PATTERNS],
+    })
+    .catch(() => {
+      /* 页面/会话已销毁时忽略：熔断状态本身已足够让命令层停下 */
+    });
+}
+
+function tripPageRisk(page: Page, state: BossPageRiskState): void {
+  if (riskStateByPage.has(page)) return;
+  riskStateByPage.set(page, state);
+  console.error(`[boss-cli] ${state.message}`);
+}
+
 async function ensurePageInitGuard(page: Page): Promise<void> {
   if (pagesWithInitGuard.has(page)) return;
   const script = buildPageGuardScript();
@@ -420,10 +480,55 @@ async function ensurePageInitGuard(page: Page): Promise<void> {
 
 function ensurePageNavigationGuard(page: Page): void {
   if (pagesWithNavigationGuard.has(page)) return;
+
+  const bounceAt: number[] = [];
+  const commitAt = new Map<string, number[]>();
+
+  const withinWindow = (stamps: number[], now: number, windowMs: number): number[] => {
+    const kept = stamps.filter((t) => now - t <= windowMs);
+    stamps.length = 0;
+    stamps.push(...kept);
+    return stamps;
+  };
+
   page.on('framenavigated', (frame) => {
     if (frame !== page.mainFrame()) return;
     const url = frame.url();
-    if (!isRiskNavigationUrl(url)) return;
+    const now = Date.now();
+
+    if (!isRiskNavigationUrl(url)) {
+      // 非风险页也可能陷入循环：安全脚本被拦后 Boss SPA 会自己反复 reload。
+      const stamps = commitAt.get(url) ?? [];
+      stamps.push(now);
+      commitAt.set(url, withinWindow(stamps, now, RELOAD_LOOP_WINDOW_MS));
+      if (stamps.length >= RELOAD_LOOP_LIMIT) {
+        tripPageRisk(page, {
+          kind: 'reload_loop',
+          url,
+          message: `页面在 ${RELOAD_LOOP_WINDOW_MS / 1000}s 内重复加载 ${stamps.length} 次（${url}），疑似 Boss 侧风控或安全脚本被拦导致自刷新。已停止自动干预，请在浏览器中确认页面状态。`,
+        });
+      }
+      return;
+    }
+
+    if (riskStateByPage.has(page) || SHOULD_ALLOW_RISK_NAV) return;
+
+    bounceAt.push(now);
+    withinWindow(bounceAt, now, RISK_BOUNCE_WINDOW_MS);
+    if (bounceAt.length > RISK_BOUNCE_LIMIT) {
+      tripPageRisk(page, {
+        kind: 'risk_navigation',
+        url,
+        message: `检测到 Boss 反复跳转风控/验证页（${url}），${RISK_BOUNCE_WINDOW_MS / 1000}s 内已 ${bounceAt.length} 次。已停止跳回沟通页并放行该页面：请在浏览器中完成验证/登录后重试；继续自动操作可能触发封号。`,
+      });
+      void relaxRiskNavigationBlocking(page)
+        .then(() => page.goto(url, { waitUntil: 'load', timeout: 60_000 }))
+        .catch(() => {
+          /* 验证页本身加载失败不再重试，熔断状态已让命令层停下 */
+        });
+      return;
+    }
+
     void page.goto(BOSS_CHAT_INDEX_URL, { waitUntil: 'load', timeout: 60_000 }).catch(() => {
       console.error(`[boss-cli] 风险页导航恢复失败：${url}`);
     });
@@ -434,12 +539,13 @@ function ensurePageNavigationGuard(page: Page): void {
 async function ensurePageRequestGuard(page: Page): Promise<void> {
   if (pagesWithRequestGuard.has(page)) return;
   const cdp = await page.createCDPSession();
+  cdpSessionByPage.set(page, cdp);
   await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
   await cdp.send('Fetch.enable', {
     patterns: [
       ...BLOCKED_SECURITY_SCRIPT_PATTERNS,
       ...REPORT_REQUEST_PATTERNS,
-      ...RISK_NAVIGATION_PATTERNS,
+      ...(SHOULD_ALLOW_RISK_NAV ? [] : RISK_NAVIGATION_PATTERNS),
     ],
   });
   cdp.on('Fetch.requestPaused', (params) => {
@@ -484,11 +590,33 @@ async function ensurePageRequestGuard(page: Page): Promise<void> {
   pagesWithRequestGuard.add(page);
 }
 
+/**
+ * 上一条命令（另一个进程）已经把页面留在验证/风控页时，直接熔断：
+ * 这种状态下再跳回沟通页只会重复被弹走，不如立刻让调用方报错。
+ * `about:blank` 属于新标签的正常初始态，不计入。
+ */
+function tripIfAlreadyOnRiskPage(page: Page): void {
+  if (SHOULD_ALLOW_RISK_NAV) return;
+  let url = '';
+  try {
+    url = page.url();
+  } catch {
+    return;
+  }
+  if (!url || url === 'about:blank' || !isRiskNavigationUrl(url)) return;
+  tripPageRisk(page, {
+    kind: 'risk_navigation',
+    url,
+    message: `当前页面停留在 Boss 验证/风控页（${url}）。已停止自动操作：请在浏览器中完成验证或重新登录后重试。`,
+  });
+}
+
 export async function installBossPageGuards(page: Page): Promise<void> {
   if (page.isClosed()) return;
   await ensurePageInitGuard(page);
   ensurePageNavigationGuard(page);
   await ensurePageRequestGuard(page);
+  tripIfAlreadyOnRiskPage(page);
 }
 
 async function installTargetPageGuards(target: Target): Promise<void> {

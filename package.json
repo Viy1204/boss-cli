@@ -1,7 +1,7 @@
 {
-  "name": "@joohw/boss-cli",
-  "version": "0.6.6",
-  "description": "Boss直聘自动化 CLI：批量发消息、自动打招呼、候选人管理、深度搜索。基于 Puppeteer/CDP 驱动本机 Chrome，支持 AI Agent 编排",
+  "name": "@viyzhu/boss-cli-fork",
+  "version": "0.6.8",
+  "description": "Boss直聘自动化 CLI（@joohw/boss-cli 的 fork，含风控页反弹熔断等修复）：批量发消息、自动打招呼、候选人管理、深度搜索。基于 Puppeteer/CDP 驱动本机 Chrome，支持 AI Agent 编排",
   "keywords": [
     "boss",
     "boss-cli",
@@ -24,13 +24,13 @@
     "hr-tools",
     "boss-direct"
   ],
-  "homepage": "https://boss-cli.com",
+  "homepage": "https://github.com/Viy1204/boss-cli#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/joohw/boss-cli.git"
+    "url": "git+https://github.com/Viy1204/boss-cli.git"
   },
   "bugs": {
-    "url": "https://github.com/joohw/boss-cli/issues"
+    "url": "https://github.com/Viy1204/boss-cli/issues"
   },
   "type": "module",
   "main": "dist/cli/index.js",
@@ -49,6 +49,7 @@
     "build": "tsc",
     "dev": "npm run build && node dist/cli/index.js",
     "deploy": "node scripts/deploy.mjs",
+    "test": "npm run build && node --test tests/*.test.mjs",
     "test:baidu": "node --env-file=.env scripts/test-baidu-ocr.mjs"
   },
   "dependencies": {
@@ -61,5 +62,8 @@
     "typescript": "^5.3.3"
   },
   "author": "Joo <1546635571@qq.com>",
-  "license": "GPL-3.0"
+  "license": "GPL-3.0",
+  "publishConfig": {
+    "access": "public"
+  }
 }

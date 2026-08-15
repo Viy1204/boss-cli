@@ -94,9 +94,11 @@ jobs:
         if: ${{ steps.npm_gate.outputs.publish == 'true' }}
         run: |
           version="${{ steps.version.outputs.target }}"
-          if npm view "@joohw/boss-cli@${version}" version --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
+          pkg="$(node -p "require('./package.json').name")"
+          echo "name=$pkg" >> "$GITHUB_OUTPUT"
+          if npm view "${pkg}@${version}" version --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "@joohw/boss-cli ${version} is already published; skipping npm publish."
+            echo "${pkg} ${version} is already published; skipping npm publish."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
@@ -118,16 +120,18 @@ jobs:
         run: |
           set -euo pipefail
           target="${{ steps.version.outputs.target }}"
-          npm dist-tag add "@joohw/boss-cli@${target}" latest --registry=https://registry.npmjs.org/
+          pkg="$(node -p "require('./package.json').name")"
+          npm dist-tag add "${pkg}@${target}" latest --registry=https://registry.npmjs.org/
 
       - name: Verify npm latest
         if: ${{ steps.npm_gate.outputs.publish == 'true' }}
         run: |
           set -euo pipefail
           target="${{ steps.version.outputs.target }}"
+          pkg="$(node -p "require('./package.json').name")"
           for attempt in $(seq 1 10); do
-            if current="$(npm view "@joohw/boss-cli" version --registry=https://registry.npmjs.org/)" &&
-              tags="$(npm dist-tag ls "@joohw/boss-cli" --registry=https://registry.npmjs.org/)"; then
+            if current="$(npm view "$pkg" version --registry=https://registry.npmjs.org/)" &&
+              tags="$(npm dist-tag ls "$pkg" --registry=https://registry.npmjs.org/)"; then
               latest="$(printf '%s\n' "$tags" | awk -F': ' '$1 == "latest" { print $2 }')"
               if [ "$current" = "$target" ] && [ "$latest" = "$target" ]; then
                 exit 0
@@ -138,7 +142,7 @@ jobs:
             fi
             sleep 6
           done
-          echo "Timed out waiting for @joohw/boss-cli npm latest to become ${target}" >&2
+          echo "Timed out waiting for ${pkg} npm latest to become ${target}" >&2
           exit 1
 
   release:

@@ -2,11 +2,11 @@ import { createHash } from 'node:crypto';
 
 const CHECK_ENTRY_URL = 'https://www.zhipin.com/web/chat/index';
 const CHECK_LOGIN_URL = 'https://www.zhipin.com/web/user/?ka=header-login';
-const CHECK_TIMEOUT_MS = 20_000;
-const VERIFIED_CAPTURE_LABEL = '2026-07-13 boss-online-js snapshot';
-const VERIFIED_BOSS_INDEX_VERSION = 'v10687';
-const VERIFIED_BOSS_BUNDLE_VERSION = 'v6214';
-const VERIFIED_ZHIPIN_SIGN_VERSION = 'v5309';
+const CHECK_TIMEOUT_MS = 45_000;
+const VERIFIED_CAPTURE_LABEL = '2026-07-17 boss-online-js snapshot';
+const VERIFIED_BOSS_INDEX_VERSION = 'v10753';
+const VERIFIED_BOSS_BUNDLE_VERSION = 'v6240';
+const VERIFIED_ZHIPIN_SIGN_VERSION = 'v5312';
 
 const CHECK_HEADERS = {
   'user-agent':
@@ -18,18 +18,18 @@ const REQUIRED_ENTRY_SCRIPT_URLS = [
   'https://static.zhipin.com/assets/sdk/warlock/warlockdata.min.2.2.14.js',
   'https://static.zhipin.com/assets/sdk/apm/patas-compat.2.1.0.min.js',
   'https://static.zhipin.com/assets/zhipin/chat/mqtt-v1.2.min.js',
-  'https://static.zhipin.com/zhipin-boss/index/v10687/static/js/polyfill.js',
-  'https://static.zhipin.com/zhipin-boss/index/v10687/static/js/app.js',
-  'https://static.zhipin.com/zhipin-boss/index/v10687/static/js/risk-detection.js',
+  'https://static.zhipin.com/zhipin-boss/index/v10753/static/js/polyfill.js',
+  'https://static.zhipin.com/zhipin-boss/index/v10753/static/js/app.js',
+  'https://static.zhipin.com/zhipin-boss/index/v10753/static/js/risk-detection.js',
 ] as const;
 
 const REQUIRED_LOGIN_SCRIPT_URLS = [
   'https://img.bosszhipin.com/static/zhipin/geek/sdk/browser-check-v2.js',
   'https://static.zhipin.com/assets/sdk/apm/patas.2.3.0.min.js',
   'https://static.zhipin.com/assets/sdk/warlock/warlockdata.min.2.2.15.js',
-  'https://static.zhipin.com/zhipin-sign/v5309/static/js/iframe-core.7fa9fa18.js',
-  'https://static.zhipin.com/zhipin-sign/v5309/static/js/vendors~app.9ac375ae.js',
-  'https://static.zhipin.com/zhipin-sign/v5309/static/js/app.ee012dc3.js',
+  'https://static.zhipin.com/zhipin-sign/v5312/static/js/iframe-core.7fa9fa18.js',
+  'https://static.zhipin.com/zhipin-sign/v5312/static/js/vendors~app.daefb1ca.js',
+  'https://static.zhipin.com/zhipin-sign/v5312/static/js/app.e89e7a3f.js',
 ] as const;
 
 const GUARDED_SCRIPT_HASHES = [
@@ -65,38 +65,38 @@ const GUARDED_SCRIPT_HASHES = [
   },
   {
     label: 'boss-index app',
-    url: 'https://static.zhipin.com/zhipin-boss/index/v10687/static/js/app.js',
-    sha256: '253e397dc8d9c8bafefed75195e558e1e4daf64ab03978e14f10709a41c39b50',
+    url: 'https://static.zhipin.com/zhipin-boss/index/v10753/static/js/app.js',
+    sha256: '65e0437bee4563f498572da71130121ac90f0835e9e1c111b3f8a781883ccfb3',
   },
   {
     label: 'boss-index polyfill',
-    url: 'https://static.zhipin.com/zhipin-boss/index/v10687/static/js/polyfill.js',
-    sha256: '154893dbe41633d643d0cdd471c03054203cc33adb697ea5940118a99100e635',
+    url: 'https://static.zhipin.com/zhipin-boss/index/v10753/static/js/polyfill.js',
+    sha256: 'bb9690cfd41a2c19a779ecf26642478d4820f8fd69ff9c6f1f660cb6ed988c50',
   },
   {
     label: 'boss-index risk-detection',
-    url: 'https://static.zhipin.com/zhipin-boss/index/v10687/static/js/risk-detection.js',
-    sha256: '4b5bb8f5daa6779add833a8986fba462ea694ce7a2c521382b70ef13aaf41f3d',
+    url: 'https://static.zhipin.com/zhipin-boss/index/v10753/static/js/risk-detection.js',
+    sha256: 'cb85c270ef9616a54a35024d81ea289b2a00f6d7366b29f24e7ea0a7e4b86f84',
   },
   {
     label: 'boss-bundle remoteEntry',
-    url: 'https://static.zhipin.com/zhipin-boss/bundle/v6214/static/remoteEntry.js',
-    sha256: 'f014e80252c282baa3719aaabbf8f494cef11736dec69876bf273b2b41c0d44b',
+    url: 'https://static.zhipin.com/zhipin-boss/bundle/v6240/static/remoteEntry.js',
+    sha256: '9a98ad5c9a36fae39ca56aca0ce002943b9090ea74d50ac194e65d0b9a52281a',
   },
   {
     label: 'zhipin-sign app',
-    url: 'https://static.zhipin.com/zhipin-sign/v5309/static/js/app.ee012dc3.js',
-    sha256: '038e5a007c0d708f2ce370dbbb02de8c202d85dbfef59ad084e672f07446a2f5',
+    url: 'https://static.zhipin.com/zhipin-sign/v5312/static/js/app.e89e7a3f.js',
+    sha256: '8cd89ecc89118e959637efe42b61663db7d617fad3435f8f2c27eba2d8dc6af6',
   },
   {
     label: 'zhipin-sign iframe-core',
-    url: 'https://static.zhipin.com/zhipin-sign/v5309/static/js/iframe-core.7fa9fa18.js',
+    url: 'https://static.zhipin.com/zhipin-sign/v5312/static/js/iframe-core.7fa9fa18.js',
     sha256: '2170fa54732f95da0b233a80a5cec6858bb2c8aec15361febe4764200a4eb02d',
   },
   {
     label: 'zhipin-sign vendor',
-    url: 'https://static.zhipin.com/zhipin-sign/v5309/static/js/vendors~app.9ac375ae.js',
-    sha256: 'bf6cd6d0be836703b86916f2ddeee69987e4e3c4f9476f16091bf9314458883b',
+    url: 'https://static.zhipin.com/zhipin-sign/v5312/static/js/vendors~app.daefb1ca.js',
+    sha256: 'a9dde3db277a8cb9c4da030353fd59cdc5a388be022e6f82a3a0389c47b0191d',
   },
 ] as const;
 

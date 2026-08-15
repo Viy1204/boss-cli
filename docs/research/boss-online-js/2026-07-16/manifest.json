@@ -1,0 +1,241 @@
+{
+  "capturedAt": "2026-07-15T16:34:03.243Z",
+  "entryPages": [
+    {
+      "label": "chat",
+      "url": "https://www.zhipin.com/web/chat/index",
+      "finalUrl": "https://www.zhipin.com/web/chat/index",
+      "bytes": 14673,
+      "sha256": "721904e63335c3e6865a56f36b432e8354e07bedeb19f7f9dc4aecbff7c38572",
+      "scripts": [
+        "https://static.zhipin.com/assets/sdk/apm/patas-compat.2.1.0.min.js",
+        "https://static.zhipin.com/assets/sdk/warlock/warlockdata.min.2.2.14.js",
+        "https://static.zhipin.com/assets/zhipin/chat/mqtt-v1.2.min.js",
+        "https://static.zhipin.com/zhipin-boss/index/v10741/static/js/app.js",
+        "https://static.zhipin.com/zhipin-boss/index/v10741/static/js/polyfill.js",
+        "https://static.zhipin.com/zhipin-boss/index/v10741/static/js/risk-detection.js"
+      ]
+    },
+    {
+      "label": "login",
+      "url": "https://www.zhipin.com/web/user/?ka=header-login",
+      "finalUrl": "https://www.zhipin.com/web/user/?ka=header-login",
+      "bytes": 9402,
+      "sha256": "a7bd1e7e666596e375b8e7ef750b25c23d58695167fd91480c2b8fc48f95ef90",
+      "scripts": [
+        "https://img.bosszhipin.com/static/zhipin/geek/sdk/browser-check-v2.js",
+        "https://static.zhipin.com/assets/sdk/apm/patas.2.3.0.min.js",
+        "https://static.zhipin.com/assets/sdk/warlock/warlockdata.min.2.2.15.js",
+        "https://static.zhipin.com/zhipin-sign/v5312/static/js/app.e89e7a3f.js",
+        "https://static.zhipin.com/zhipin-sign/v5312/static/js/iframe-core.7fa9fa18.js",
+        "https://static.zhipin.com/zhipin-sign/v5312/static/js/vendors~app.daefb1ca.js"
+      ]
+    }
+  ],
+  "count": 13,
+  "totalBytes": 1509854,
+  "skippedNestedScriptUrls": [],
+  "unresolvedScriptUrls": [],
+  "entries": [
+    {
+      "url": "https://img.bosszhipin.com/static/zhipin/geek/sdk/browser-check-v2.js",
+      "finalUrl": "https://img.bosszhipin.com/static/zhipin/geek/sdk/browser-check-v2.js",
+      "localPath": "raw/static/zhipin/geek/sdk/browser-check-v2.js",
+      "bytes": 1241,
+      "sha256": "0ba94a338ed00ba353384a091f36fca73c67651cf6fe28c588c5e926aaa0399e",
+      "contentType": "application/javascript",
+      "searchHits": {
+        "Function(": 1,
+        "console": 1
+      },
+      "sources": []
+    },
+    {
+      "url": "https://static.zhipin.com/assets/sdk/apm/patas-compat.2.1.0.min.js",
+      "finalUrl": "https://static.zhipin.com/assets/sdk/apm/patas-compat.2.1.0.min.js",
+      "localPath": "raw/assets/sdk/apm/patas-compat.2.1.0.min.js",
+      "bytes": 212594,
+      "sha256": "2c8d059c16800f91639bc7eb2040bfa8a211425d02a8b702831c9cd5b2f6315a",
+      "contentType": "application/x-javascript",
+      "searchHits": {
+        "MutationObserver": 2,
+        "sendAction": 1,
+        "Function(": 1,
+        "constructor": 43,
+        "setInterval": 1,
+        "console": 14
+      },
+      "sources": []
+    },
+    {
+      "url": "https://static.zhipin.com/assets/sdk/apm/patas.2.3.0.min.js",
+      "finalUrl": "https://static.zhipin.com/assets/sdk/apm/patas.2.3.0.min.js",
+      "localPath": "raw/assets/sdk/apm/patas.2.3.0.min.js",
+      "bytes": 115588,
+      "sha256": "cf96ad9e6da919b4a88d623b53d7ba2cc49529df9d12ef7d886164c3482424cc",
+      "contentType": "application/x-javascript",
+      "searchHits": {
+        "sendAction": 1,
+        "constructor": 6,
+        "setInterval": 1,
+        "console": 12
+      },
+      "sources": []
+    },
+    {
+      "url": "https://static.zhipin.com/assets/sdk/warlock/warlockdata.min.2.2.14.js",
+      "finalUrl": "https://static.zhipin.com/assets/sdk/warlock/warlockdata.min.2.2.14.js",
+      "localPath": "raw/assets/sdk/warlock/warlockdata.min.2.2.14.js",
+      "bytes": 71048,
+      "sha256": "5979a30734aa6ce729989e545c61f52a8b6e717bdd544e894e3c60db893e7d68",
+      "contentType": "application/x-javascript",
+      "searchHits": {
+        "constructor": 3,
+        "console": 8
+      },
+      "sources": []
+    },
+    {
+      "url": "https://static.zhipin.com/assets/sdk/warlock/warlockdata.min.2.2.15.js",
+      "finalUrl": "https://static.zhipin.com/assets/sdk/warlock/warlockdata.min.2.2.15.js",
+      "localPath": "raw/assets/sdk/warlock/warlockdata.min.2.2.15.js",
+      "bytes": 71174,
+      "sha256": "51bd06ef6a77d5ceecef040c5ff8c44324f425104bb505137302de1e20327345",
+      "contentType": "application/x-javascript",
+      "searchHits": {
+        "constructor": 3,
+        "console": 8
+      },
+      "sources": []
+    },
+    {
+      "url": "https://static.zhipin.com/assets/zhipin/chat/mqtt-v1.2.min.js",
+      "finalUrl": "https://static.zhipin.com/assets/zhipin/chat/mqtt-v1.2.min.js",
+      "localPath": "raw/assets/zhipin/chat/mqtt-v1.2.min.js",
+      "bytes": 128295,
+      "sha256": "d63db9287a0aba5dc81c3b1fb393303a63b1a6c0dd0aec5bc26ddc84b0dfc67f",
+      "contentType": "application/x-javascript",
+      "searchHits": {
+        "Function(": 1,
+        "console": 2,
+        "verify": 19
+      },
+      "sources": []
+    },
+    {
+      "url": "https://static.zhipin.com/zhipin-boss/bundle/v6237/static/remoteEntry.js",
+      "finalUrl": "https://static.zhipin.com/zhipin-boss/bundle/v6237/static/remoteEntry.js",
+      "localPath": "raw/boss-bundle-v6237/remoteEntry.js",
+      "bytes": 10465,
+      "sha256": "0dadb9a28b14e67c4f027ba781fe42adc4b9530cca522cc8c1efe7eee906f555",
+      "contentType": "application/x-javascript",
+      "searchHits": {},
+      "sources": []
+    },
+    {
+      "url": "https://static.zhipin.com/zhipin-boss/index/v10741/static/js/app.js",
+      "finalUrl": "https://static.zhipin.com/zhipin-boss/index/v10741/static/js/app.js",
+      "localPath": "raw/boss-index-v10741/app.js",
+      "bytes": 11720,
+      "sha256": "d2e13390be4bfdae19cb53132bfa0be9a1c76ec37566e36ab86f4a1c87ce0f1c",
+      "contentType": "application/x-javascript",
+      "searchHits": {
+        "Function(": 1,
+        "console": 7
+      },
+      "sources": []
+    },
+    {
+      "url": "https://static.zhipin.com/zhipin-boss/index/v10741/static/js/polyfill.js",
+      "finalUrl": "https://static.zhipin.com/zhipin-boss/index/v10741/static/js/polyfill.js",
+      "localPath": "raw/boss-index-v10741/polyfill.js",
+      "bytes": 186590,
+      "sha256": "7044439dbeeebc3513175a2fbc04e2b5746e71fc690179a5f4cd3ed840ac07a8",
+      "contentType": "application/x-javascript",
+      "searchHits": {
+        "MutationObserver": 2,
+        "Function(": 5,
+        "constructor": 59,
+        "setInterval": 3,
+        "console": 5
+      },
+      "sources": []
+    },
+    {
+      "url": "https://static.zhipin.com/zhipin-boss/index/v10741/static/js/risk-detection.js",
+      "finalUrl": "https://static.zhipin.com/zhipin-boss/index/v10741/static/js/risk-detection.js",
+      "localPath": "raw/boss-index-v10741/risk-detection.js",
+      "bytes": 24887,
+      "sha256": "e5e8149741846de1bc4fb7646ff49544db4eb45b4eee6dc0ad733589ab42416c",
+      "contentType": "application/x-javascript",
+      "searchHits": {
+        "99001": 2,
+        "99002": 1,
+        "99004": 1,
+        "99005": 1,
+        "srcdoc": 1,
+        "MutationObserver": 2,
+        "isTrusted": 5,
+        "sendAction": 2,
+        "Function(": 1,
+        "constructor": 3,
+        "setInterval": 1,
+        "console": 5,
+        "devtools": 1,
+        "security": 1
+      },
+      "sources": []
+    },
+    {
+      "url": "https://static.zhipin.com/zhipin-sign/v5312/static/js/app.e89e7a3f.js",
+      "finalUrl": "https://static.zhipin.com/zhipin-sign/v5312/static/js/app.e89e7a3f.js",
+      "localPath": "raw/zhipin-sign-v5312/app.e89e7a3f.js",
+      "bytes": 60997,
+      "sha256": "8cd89ecc89118e959637efe42b61663db7d617fad3435f8f2c27eba2d8dc6af6",
+      "contentType": "application/x-javascript",
+      "searchHits": {
+        "sendAction": 2,
+        "setInterval": 1,
+        "console": 4,
+        "verify": 6,
+        "security": 1
+      },
+      "sources": []
+    },
+    {
+      "url": "https://static.zhipin.com/zhipin-sign/v5312/static/js/iframe-core.7fa9fa18.js",
+      "finalUrl": "https://static.zhipin.com/zhipin-sign/v5312/static/js/iframe-core.7fa9fa18.js",
+      "localPath": "raw/zhipin-sign-v5312/iframe-core.7fa9fa18.js",
+      "bytes": 107311,
+      "sha256": "2170fa54732f95da0b233a80a5cec6858bb2c8aec15361febe4764200a4eb02d",
+      "contentType": "application/x-javascript",
+      "searchHits": {
+        "MutationObserver": 5,
+        "constructor": 8,
+        "console": 4,
+        "devtools": 6
+      },
+      "sources": []
+    },
+    {
+      "url": "https://static.zhipin.com/zhipin-sign/v5312/static/js/vendors~app.daefb1ca.js",
+      "finalUrl": "https://static.zhipin.com/zhipin-sign/v5312/static/js/vendors~app.daefb1ca.js",
+      "localPath": "raw/zhipin-sign-v5312/vendors~app.daefb1ca.js",
+      "bytes": 507944,
+      "sha256": "a9dde3db277a8cb9c4da030353fd59cdc5a388be022e6f82a3a0389c47b0191d",
+      "contentType": "application/x-javascript",
+      "searchHits": {
+        "srcdoc": 1,
+        "MutationObserver": 4,
+        "Function(": 12,
+        "constructor": 86,
+        "setInterval": 4,
+        "console": 46,
+        "verify": 5,
+        "security": 3,
+        "403.html": 2
+      },
+      "sources": []
+    }
+  ]
+}

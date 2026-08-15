@@ -1,5 +1,6 @@
 node_modules/
-dist/
+# dist/ 入库：本 fork 作为分发渠道，npm 从 git 安装时不带 devDeps，跑不了 tsc
+# dist/
 .env
 .env.deploy
 *.log

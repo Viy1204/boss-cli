@@ -230,6 +230,8 @@ function extractInferredWebpackChunkUrls(jsText, baseUrl) {
 }
 
 async function fetchStrict(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   let res;
   try {
     res = await fetch(url, {
@@ -238,20 +240,26 @@ async function fetchStrict(url) {
         accept: '*/*',
       },
       redirect: 'follow',
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: controller.signal,
     });
   } catch (e) {
+    clearTimeout(timeout);
     const msg = e instanceof Error ? e.message : String(e);
     throw new Error(`Fetch failed for ${url}: ${msg}`);
   }
   if (!res.ok) {
+    clearTimeout(timeout);
     throw new Error(`HTTP ${res.status} ${res.statusText} while fetching ${url}`);
   }
-  return {
-    finalUrl: res.url || url,
-    contentType: res.headers.get('content-type') || '',
-    buffer: Buffer.from(await res.arrayBuffer()),
-  };
+  try {
+    return {
+      finalUrl: res.url || url,
+      contentType: res.headers.get('content-type') || '',
+      buffer: Buffer.from(await res.arrayBuffer()),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function pathExists(target) {

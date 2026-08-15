@@ -1,5 +1,32 @@
 # Boss 反自动化检测：防御策略文档
 
+## 2026-07-16 baseline review
+
+- Captured snapshot: `docs/research/boss-online-js/2026-07-16`.
+- Boss index changed from `v10723` to `v10741`; Boss bundle changed from `v6232` to `v6237`; Zhipin sign changed from `v5310` to `v5312`.
+- `risk-detection.js` is byte-for-byte identical to the 2026-07-15 copy after normalizing the `v10723`/`v10741` path. The configured high-risk pattern counts are unchanged, so the existing `*zhipin-boss*risk-detection*` request block remains valid.
+- Zhipin sign `iframe-core.7fa9fa18.js` is unchanged after version-path normalization. The sign `vendors~app` and `app` files were rebundled with new names and hashes, but no new entry-page security host was introduced.
+- Shared Warlock, APM, MQTT, and browser-check assets kept their previous hashes. `src/common/boss_availability.ts` was updated to the new entry URLs and guarded hashes; no `boss_page_guards.ts` strategy change is required.
+
+## 2026-07-15 baseline review
+
+- Captured snapshot: `docs/research/boss-online-js/2026-07-15`.
+- Boss index changed from `v10718` to `v10723`; Boss bundle changed from `v6230` to `v6232`; Zhipin sign changed from `v5309` to `v5310`.
+- `risk-detection.js` is byte-for-byte identical after normalizing its version path, and all configured high-risk pattern counts are unchanged.
+- The sign vendor and iframe-core files are byte-for-byte unchanged. The sign app is byte-for-byte identical after normalizing its version and build hashes, so no new anti-debug or fingerprinting behavior was introduced.
+- Bundle chunk `270.js` only changes empty job-list initialization. It adds no strings or high-risk pattern hits; all other bundle chunks are unchanged.
+- Same-URL hash changes: 0. Existing version-independent request guards still cover the observed security scripts, report endpoints, and risk-navigation paths.
+- `src/common/boss_availability.ts` was updated to the new entry URLs and guarded hashes. No page-guard strategy change is required.
+
+## 2026-07-14 baseline review
+
+- Captured snapshot: `docs/research/boss-online-js/2026-07-14`.
+- Boss index changed from `v10687` to `v10718`; Boss bundle changed from `v6214` to `v6230`; Zhipin sign stayed `v5309`.
+- The change is a cosmetic webpack re-bundle of the boss-index scripts (module split + variable renames). `risk-detection.js` string literals are identical (591/591, differing only in its self-referential version URL) and all 10 regexes are unchanged; the risk-pattern category counts match the 2026-07-13 baseline exactly. No new anti-debug / fingerprinting was introduced.
+- Same-URL hash changes: 0 (all sign, warlock, patas, mqtt, browser-check scripts unchanged). Only version-bumped boss-index and boss-bundle entry scripts moved.
+- `src/common/boss_availability.ts` was updated with the new Boss index and bundle entry scripts plus guarded hashes.
+- `src/common/boss_page_guards.ts` request guards use version-independent wildcards and still cover the observed risk/security/report URLs in this snapshot.
+
 ## 2026-07-13 baseline review
 
 - Captured snapshot: `docs/research/boss-online-js/2026-07-13`.
@@ -528,6 +555,25 @@ recommend / chat 等命令的输出，对 agent / 脚本调用方零侵入）。
 | `block:script` | 命中 `BLOCKED_SECURITY_SCRIPT_PATTERNS`：安全脚本/WASM/SDK | `failRequest(BlockedByClient)` |
 | `block:nav` | 命中 `RISK_NAVIGATION_RE`：403 / verify / passport 风控跳转 | `failRequest(BlockedByClient)` |
 
+### 风控熔断（阻断不能无限做）
+
+拦截风控跳转 + `framenavigated` 里跳回沟通页，只对"偶发误伤"有效。Boss 真判定风控时会
+持续把主 frame 推向 verify 页，一拦一跳就把**一次风控放大成无限刷新**：页面反复重载、
+命令永远等不到 `.menu-list`，终端却一行原因都没有。
+
+因此导航守卫带熔断（`src/common/boss_page_guards.ts`）：
+
+| 触发条件 | 阈值 | 熔断后行为 |
+|---|---|---|
+| 风控页反弹 | 60s 内超过 3 次 | 停止跳回沟通页；`Fetch.enable` 去掉 `RISK_NAVIGATION_PATTERNS` 放行验证页；导航到该验证页让用户手动过验证 |
+| 同一 URL 自刷新 | 15s 内 commit ≥ 5 次 | 不再干预，仅记录状态（覆盖"安全脚本被拦 → SPA 自救式 reload"） |
+| 命令启动时已停在验证页 | 立即 | 直接熔断，不做任何跳转 |
+
+熔断状态挂在 `WeakMap<Page, BossPageRiskState>`，由 `getBossPageRiskState()` 读取；
+`withBossSessionPage` 在预检查、`.menu-list` 超时和 catch 分支都会断言，抛
+`BossPageRiskError` 并附人工处置动作，命令**安全停下**而不是继续空转。状态是进程内的，
+下一条命令靠"已停在验证页"这条规则立即复现熔断。
+
 `report:204` 的 body 预览是查"对方到底上报了哪些 code、哪些 nodeJson"的最直接证据，
 比抓 Network 面板更稳（被拦请求在 DevTools 里只显示 `(blocked:other)`，看不到 payload）。
 预览长度上限 `POST_DATA_PREVIEW_LIMIT = 200` 字符，避免极长 JSON 刷屏。
@@ -740,3 +786,4 @@ BOSS_BROWSER_ALLOW_VERBOSE_CONSOLE=true
 | `BOSS_CLI_NO_AGENT_OVERLAY` | `false` | 关闭顶部操作指示条 |
 | `BOSS_BROWSER_ALLOW_CONSOLE_CLEAR` | `false` | 允许页面调用 `console.clear()` 清空控制台 |
 | `BOSS_BROWSER_ALLOW_VERBOSE_CONSOLE` | `false` | 允许 `console.log` 等方法把对象原样交给 V8 inspector（恢复对象树展开 UX，但会重新被时间差 DevTools 探测命中） |
+| `BOSS_BROWSER_ALLOW_RISK_NAV` | `false` | 完全不拦截风控/验证页跳转，也不跳回沟通页。排查"页面持续刷新"时用它看 Boss 到底要求什么（多半是滑块验证）；人工过完验证再关掉 |
