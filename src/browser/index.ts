@@ -19,6 +19,7 @@ export {
   closeRemoteBrowser,
   probeRemoteHeadless,
   resolveHeadlessFromEnv,
+  REMOTE_DEBUGGING_PORT,
 } from './cdp_browser.js';
 export {
   detachBrowserSession,

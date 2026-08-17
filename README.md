@@ -178,7 +178,11 @@ RECRUIT_BROWSER_HIDDEN=false boss list     # 招聘工具链共读的开关（bo
 BOSS_BROWSER_HEADLESS=false boss list      # 只影响 boss-cli，优先级更高
 ```
 
-两个都不设时默认无头。`boss login` **不受影响** —— 扫码必须看得见，它会自己把无头实例关掉、以有头重启（登录态在 `~/.boss-cli/.cache/` 里，不会丢）。
+两个都不设时默认无头。**换了变量不会让已经在跑的那只变可见** —— 先 `boss shutdown` 关掉它，下条命令才会按新模式重启。
+
+浏览器跨命令常驻（命令结束只断 CDP、不关窗口），跑完想释放内存就 `boss shutdown`（登录态保留）。
+
+`boss login` **不受影响** —— 扫码必须看得见，它会自己把无头实例关掉、以有头重启（登录态在 `~/.boss-cli/.cache/` 里，不会丢）。
 
 想看浏览器在做什么但不要窗口抢焦点，用 recruiting-copilot 的 DSH「招聘浏览器」面板：无头浏览器的实时画面推到 Web UI 里，能看也能点。
 

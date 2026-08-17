@@ -4,7 +4,7 @@
  */
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
-import { detachBrowserSession, resolveHeadlessFromEnv } from '../browser/index.js';
+import { closeRemoteBrowser, detachBrowserSession, probeRemoteHeadless, REMOTE_DEBUGGING_PORT, resolveHeadlessFromEnv, } from '../browser/index.js';
 import { implChatAction, implLogin, implListCandidates, implListUnreadCandidates, implOpenChatByIndex, implListPositions, implListPositionsWithOptions, implNormalSearch, implOpenChat, implRecommend, implPreview, implRecommendGreet, implSetBaiduCredentials, implBossSearch, implSendMessage, } from '../toolset/index.js';
 import { printBossInteractiveBanner } from './banner.js';
 import { printPackageUpdateNoticeIfDue, printVersionInfo, runPackageUpdate, } from './version.js';
@@ -110,6 +110,9 @@ function printHelp() {
       显示当前版本并检查 npm 是否有更新
   boss update
       使用 npm 安装最新版 boss-cli
+  boss shutdown
+      关掉常驻的浏览器（登录态保留，下条命令会自动重新拉起）
+      浏览器默认无头且跨命令常驻；想看见窗口用 RECRUIT_BROWSER_HIDDEN=false
   boss login
       打开登录页（需要用户在浏览器中自行完成登录，这个命令会直接返回）
   boss list [--unread]
@@ -342,6 +345,20 @@ export async function executeCommand(argv) {
     }
     if (cmd === 'login') {
         return implLogin();
+    }
+    // 浏览器跨命令常驻，所以需要一个显式的退出口（跑完招聘想释放内存时用）。
+    // 名字不能叫 quit —— 交互模式里 exit / quit 已经是退出 REPL 的别名。
+    if (cmd === 'shutdown') {
+        const headless = await probeRemoteHeadless();
+        if (headless === null) {
+            return `没有在跑的 Boss 浏览器（端口 ${REMOTE_DEBUGGING_PORT} 无响应），无需关闭`;
+        }
+        // 先撤掉本进程内可能持有的引用，再关端口上那只（一次性命令下本来就没有引用）
+        await detachBrowserSession().catch(() => { });
+        const closed = await closeRemoteBrowser();
+        return closed
+            ? `已关闭 Boss 浏览器（${headless ? '无头' : '有头'}，端口 ${REMOTE_DEBUGGING_PORT}）。登录态已保留，下条命令会自动重新拉起。`
+            : `关闭失败：端口 ${REMOTE_DEBUGGING_PORT} 上的浏览器没有响应关闭请求，可手动结束该 Chrome 主进程。`;
     }
     if (cmd === 'update') {
         const { rest, opts, flags } = parseOpts(tail);

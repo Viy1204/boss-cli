@@ -39,7 +39,9 @@
 RECRUIT_BROWSER_HIDDEN=false boss <cmd>    # 或 BOSS_BROWSER_HEADLESS=false
 ```
 
-已经有一只无头实例在跑时，换了变量也**不会**自动变可见 —— 端口上已有实例会被直接复用。要么先关掉那只（`closeRemoteBrowser()` 或结束浏览器主进程），要么参考 `login` 的做法。
+已经有一只无头实例在跑时，换了变量也**不会**自动变可见 —— 端口上已有实例会被直接复用。先 `boss shutdown` 关掉那只，下条命令才会按新模式重启。
+
+浏览器**跨命令常驻**（一次性命令结束只 detach CDP，不关窗口），`boss shutdown` 是唯一的显式退出口。别在命令路径里加关浏览器的逻辑。名字不叫 `quit` 是因为交互模式里 `exit` / `quit` 已经是退出 REPL 的别名。
 
 **判断在跑的实例是什么模式**：读 `http://127.0.0.1:53470/json/version` 的 `User-Agent`，含 `HeadlessChrome` 即无头（`probeRemoteHeadless()`）。**不要**用进程内变量判断 —— 一次性命令刚起进程时那些变量都是空的，`login.ts` 曾因此把登录页开在看不见的浏览器里。
 
