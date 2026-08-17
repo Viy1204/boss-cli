@@ -4,6 +4,6 @@
 export * from './timing.js';
 export * from './human_delay.js';
 export { resumeHeight, setTempHeight, snapshotBossPageViewport, } from './viewport_temp.js';
-export { connectBrowser, createPageCDPSession, defaultViewportFromEnv, LAUNCH_ARGS_ALLOW_ALL_CORS, LAUNCH_ARGS_LESS_AUTOMATION, wasLastChromeLaunchHeadless, } from './cdp_browser.js';
+export { connectBrowser, createPageCDPSession, defaultViewportFromEnv, LAUNCH_ARGS_ALLOW_ALL_CORS, LAUNCH_ARGS_LESS_AUTOMATION, closeRemoteBrowser, probeRemoteHeadless, resolveHeadlessFromEnv, REMOTE_DEBUGGING_PORT, } from './cdp_browser.js';
 export { detachBrowserSession, disconnectBrowserSession, ensureAndGetBrowser, ensureBrowserSession, getBrowserRef, getPageRef, setSessionPage, } from './browser_session.js';
 //# sourceMappingURL=index.js.map

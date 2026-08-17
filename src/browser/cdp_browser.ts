@@ -25,16 +25,83 @@ export const REMOTE_DEBUGGING_PORT: number = (() => {
 })();
 
 let spawnedChromeChild: ChildProcess | null = null;
-/** 最近一次 `connectBrowser` 是否以无头方式启动（`browser.process()` 在 connect 模式下不可用，供 login 等逻辑判断）。 */
-let lastChromeLaunchHeadless = false;
 
 export function clearSpawnedChromeProcessRef(): void {
   spawnedChromeChild = null;
 }
 
-/** 最近一次启动是否为无头（仅本进程内、与当前会话一致时有效）。 */
-export function wasLastChromeLaunchHeadless(): boolean {
-  return lastChromeLaunchHeadless;
+/**
+ * 是否以无头（隐藏）方式启动。
+ *
+ * 优先级：`BOSS_BROWSER_HEADLESS`（本 CLI 专属，显式覆盖）> `RECRUIT_BROWSER_HIDDEN`
+ * （招聘工具链共读的单一来源）> 默认 **true**。
+ *
+ * 默认隐藏是有意的：招聘浏览器不该抢前景与键盘焦点。想看见窗口设
+ * `RECRUIT_BROWSER_HIDDEN=false`（或 `BOSS_BROWSER_HEADLESS=false`）。
+ */
+export function resolveHeadlessFromEnv(): boolean {
+  const own = process.env.BOSS_BROWSER_HEADLESS?.trim().toLowerCase();
+  if (own === 'true' || own === '1' || own === 'yes' || own === 'y') return true;
+  if (own === 'false' || own === '0' || own === 'no' || own === 'n') return false;
+  return process.env.RECRUIT_BROWSER_HIDDEN?.trim().toLowerCase() !== 'false';
+}
+
+/**
+ * 无头模式追加的启动参数。
+ *
+ * 无头虚拟屏默认是 800x600（Chromium 文档化的默认值），这是个已知的强自动化指纹，
+ * 而 `--window-size` **抬不动它** —— 实测只有 `--screen-info` 能改（Chrome 142+，
+ * 且仅无头下有效）。`workAreaBottom=40` 让 `screen.availHeight` 小于 `screen.height`，
+ * 模拟真实桌面的任务栏。注意命名参数是 workAreaTop/Bottom/Left/Right 四个分开写，
+ * 写成 `workArea=` 会让 Chrome 直接启动失败。
+ */
+const LAUNCH_ARGS_HEADLESS_SCREEN = ['--screen-info={0,0 1920x1080 workAreaBottom=40}'] as const;
+
+/**
+ * 探测固定调试端口上已在跑的那只浏览器是不是无头：读 `/json/version` 的
+ * User-Agent，无头 Chrome 报 `HeadlessChrome/<ver>`，有头报 `Chrome/<ver>`
+ * （实测确认，这是两种模式之间唯一的指纹差异）。
+ *
+ * 必须这样读**进程外的真实状态**：一次性命令（如 `boss login`）刚起进程时，
+ * 任何进程内变量都是空的，靠它们判断等于不判断。
+ *
+ * 返回 null 表示端口上没有实例在跑。
+ *
+ * ⚠️ 一旦决定伪装 UA 来规避指纹，这个判据就失效，需要换信号。
+ */
+export async function probeRemoteHeadless(
+  port: number = REMOTE_DEBUGGING_PORT,
+  timeoutMs = 800,
+): Promise<boolean | null> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: ctrl.signal });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { 'User-Agent'?: string };
+    const ua = data['User-Agent'];
+    return typeof ua === 'string' ? /HeadlessChrome/i.test(ua) : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * 关掉固定端口上已在跑的浏览器（本进程没有它的引用时用，例如一次性命令要切换模式）。
+ * 登录态在 user-data-dir 里，不会因此丢失。
+ */
+export async function closeRemoteBrowser(port: number = REMOTE_DEBUGGING_PORT): Promise<boolean> {
+  const wsUrl = await probeRemoteDebuggingWsEndpoint(port, 800);
+  if (!wsUrl) return false;
+  try {
+    const browser = await puppeteer.connect({ browserWSEndpoint: wsUrl });
+    await browser.close();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -223,7 +290,8 @@ export type ConnectBrowserOptions = {
  * - `BOSS_BROWSER_DISABLE_GPU` — 设为 `true` 时附加 `--disable-gpu`
  *
  * 若以上均未设置，会按系统尝试常见 Chrome / Edge / Chromium 安装路径。
- * - `BOSS_BROWSER_HEADLESS` — 设为 `true` 时启用无头；默认**有界面**。
+ * - `RECRUIT_BROWSER_HIDDEN` — 招聘工具链共读的隐藏开关；**默认无头**，设为 `false` 退回有界面。
+ * - `BOSS_BROWSER_HEADLESS` — 本 CLI 专属覆盖项，优先级高于 `RECRUIT_BROWSER_HIDDEN`。
  * - `BOSS_BROWSER_VIEWPORT_WIDTH` / `BOSS_BROWSER_VIEWPORT_HEIGHT` — 启动时显式指定视口；未设置时不覆盖浏览器窗口尺寸
  */
 /** 启动浏览器时的默认视口（与环境变量一致）；截图恢复时 `viewport()` 为 null 也可用其兜底。 */
@@ -269,12 +337,11 @@ export async function connectBrowser(options: ConnectBrowserOptions = {}): Promi
     );
   }
 
-  const headless = options.headless ?? process.env.BOSS_BROWSER_HEADLESS === 'true';
+  const headless = options.headless ?? resolveHeadlessFromEnv();
   const allowAllCors = options.allowAllCors ?? process.env.BOSS_BROWSER_ALLOW_ALL_CORS === 'true';
   const disableGpu = process.env.BOSS_BROWSER_DISABLE_GPU === 'true';
 
   clearSpawnedChromeProcessRef();
-  lastChromeLaunchHeadless = !!headless;
 
   /**
    * 优先直连固定调试端口上的已有实例：boss-cli 使用独立 user-data-dir，
@@ -294,6 +361,7 @@ export async function connectBrowser(options: ConnectBrowserOptions = {}): Promi
   const disableWasm = process.env.BOSS_BROWSER_DISABLE_WASM === 'true' || process.env.BOSS_BROWSER_DISABLE_WASM === '1';
   const userArgs = [
     ...LAUNCH_ARGS_LESS_AUTOMATION,
+    ...(headless ? LAUNCH_ARGS_HEADLESS_SCREEN : []),
     ...(disableGpu ? ['--disable-gpu'] : []),
     ...(disableWasm ? ['--js-flags=--noexpose_wasm'] : []),
     ...(allowAllCors ? LAUNCH_ARGS_ALLOW_ALL_CORS : []),

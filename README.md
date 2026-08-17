@@ -167,8 +167,24 @@ boss-cli 基于 CDP 连接本机 Chrome，复用已有登录态，针对 Boss直
 **数据会上传到服务器吗？**
 不会。Cookie 和缓存仅存储在本地 `~/.boss-cli/`，CLI 不经过任何第三方服务器。
 
-**如何无头模式运行？**
-设置环境变量 `BOSS_BROWSER_HEADLESS=true`（默认 headful，便于扫码登录）。
+**浏览器窗口去哪了？怎么让它重新可见？**
+
+**默认无头**（浏览器在后台跑，看不见窗口）。这是有意的：有头窗口一启动就会抢走键盘焦点，打断你正在做的别的事。
+
+想看见窗口，设任意一个：
+
+```bash
+RECRUIT_BROWSER_HIDDEN=false boss list     # 招聘工具链共读的开关（boss / liepin / DSH 面板都认）
+BOSS_BROWSER_HEADLESS=false boss list      # 只影响 boss-cli，优先级更高
+```
+
+两个都不设时默认无头。**换了变量不会让已经在跑的那只变可见** —— 先 `boss shutdown` 关掉它，下条命令才会按新模式重启。
+
+浏览器跨命令常驻（命令结束只断 CDP、不关窗口），跑完想释放内存就 `boss shutdown`（登录态保留）。
+
+`boss login` **不受影响** —— 扫码必须看得见，它会自己把无头实例关掉、以有头重启（登录态在 `~/.boss-cli/.cache/` 里，不会丢）。
+
+想看浏览器在做什么但不要窗口抢焦点，用 recruiting-copilot 的 DSH「招聘浏览器」面板：无头浏览器的实时画面推到 Web UI 里，能看也能点。
 
 **如何自定义操作蒙层品牌？**
 设置环境变量 `BOSS_CLI_AGENT_BRAND=你的品牌名`。
@@ -200,12 +216,20 @@ npm run dev     # build + 交互模式
 发布新版本时，本地只需要更新 `package.json` 版本号、提交代码、创建并推送 `v*` tag：
 
 ```bash
-git tag -a v0.6.0 -m "v0.6.0"
+git tag -a v0.7.0 -m "v0.7.0"
 git push origin main
-git push origin v0.6.0
+git push origin v0.7.0
 ```
 
-tag 推送后，workflow 会自动安装依赖、构建、检查 npm 版本、发布 `@joohw/boss-cli`、更新 `latest` dist-tag，并创建或更新 GitHub Release。npm 发布依赖仓库 Secret `NPM_TOKEN`，本地不需要手动执行 `npm publish`。
+tag 推送后，workflow 会自动安装依赖、构建、检查 npm 版本、发布、更新 `latest` dist-tag，并创建或更新 GitHub Release。
+本地不需要手动执行 `npm publish`。
+
+**发的是哪个包**：workflow 用 `node -p "require('./package.json').name"` 取包名，所以本 fork 发布的是
+**`@viyzhu/boss-cli-fork`**，不是上游的 `@joohw/boss-cli`。（此处此前写着上游包名，已订正。）
+
+npm 发布依赖仓库 Secret `NPM_TOKEN`；**没配这个 secret 时 workflow 会打印
+`NPM_TOKEN secret is missing; skipping publish.` 然后跳过发布，tag 推送本身仍然"成功"**——
+所以推完 tag 要去 Actions 里确认那一步真的跑了。同名同版本已发布过时也会跳过。
 
 ---
 
