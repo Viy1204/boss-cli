@@ -216,12 +216,20 @@ npm run dev     # build + 交互模式
 发布新版本时，本地只需要更新 `package.json` 版本号、提交代码、创建并推送 `v*` tag：
 
 ```bash
-git tag -a v0.6.0 -m "v0.6.0"
+git tag -a v0.7.0 -m "v0.7.0"
 git push origin main
-git push origin v0.6.0
+git push origin v0.7.0
 ```
 
-tag 推送后，workflow 会自动安装依赖、构建、检查 npm 版本、发布 `@joohw/boss-cli`、更新 `latest` dist-tag，并创建或更新 GitHub Release。npm 发布依赖仓库 Secret `NPM_TOKEN`，本地不需要手动执行 `npm publish`。
+tag 推送后，workflow 会自动安装依赖、构建、检查 npm 版本、发布、更新 `latest` dist-tag，并创建或更新 GitHub Release。
+本地不需要手动执行 `npm publish`。
+
+**发的是哪个包**：workflow 用 `node -p "require('./package.json').name"` 取包名，所以本 fork 发布的是
+**`@viyzhu/boss-cli-fork`**，不是上游的 `@joohw/boss-cli`。（此处此前写着上游包名，已订正。）
+
+npm 发布依赖仓库 Secret `NPM_TOKEN`；**没配这个 secret 时 workflow 会打印
+`NPM_TOKEN secret is missing; skipping publish.` 然后跳过发布，tag 推送本身仍然"成功"**——
+所以推完 tag 要去 Actions 里确认那一步真的跑了。同名同版本已发布过时也会跳过。
 
 ---
 
