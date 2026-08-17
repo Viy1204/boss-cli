@@ -23,6 +23,30 @@
 - 页面 URL、命令功能和当前位置要求记录在 `docs/boss-url-map.md`。
 - 修改导航、命令入口、当前位置校验或 help 文案前，先查阅并同步更新该文档。
 
+## 浏览器默认无头（重要）
+
+浏览器**默认以无头方式启动**，看不见窗口。有头窗口一启动就抢键盘焦点，会打断用户正在做的事，所以默认隐藏。
+
+开关优先级（`resolveHeadlessFromEnv()`，`src/browser/cdp_browser.ts`）：
+
+1. `BOSS_BROWSER_HEADLESS` —— 本 CLI 专属，显式覆盖，认 `true/1/yes/y` 与 `false/0/no/n`
+2. `RECRUIT_BROWSER_HIDDEN` —— 招聘工具链共读的单一来源（boss-cli / liepin-cli / DSH 面板都认），设 `false` 退回有头
+3. 都没设 → **无头**
+
+**要让浏览器可见时**（用户说"我看不到浏览器"、"让我看看它在干什么"、需要人工介入页面）：
+
+```bash
+RECRUIT_BROWSER_HIDDEN=false boss <cmd>    # 或 BOSS_BROWSER_HEADLESS=false
+```
+
+已经有一只无头实例在跑时，换了变量也**不会**自动变可见 —— 端口上已有实例会被直接复用。要么先关掉那只（`closeRemoteBrowser()` 或结束浏览器主进程），要么参考 `login` 的做法。
+
+**判断在跑的实例是什么模式**：读 `http://127.0.0.1:53470/json/version` 的 `User-Agent`，含 `HeadlessChrome` 即无头（`probeRemoteHeadless()`）。**不要**用进程内变量判断 —— 一次性命令刚起进程时那些变量都是空的，`login.ts` 曾因此把登录页开在看不见的浏览器里。
+
+`login` 是例外：扫码必须可见，它会自己探测并把无头实例关掉重启为有头。登录态在 `~/.boss-cli/.cache/` 的 user-data-dir 里，重启不丢。
+
+无头下额外带 `--screen-info={0,0 1920x1080 workAreaBottom=40}`：无头虚拟屏默认 800x600 是已知的强自动化指纹，而 `--window-size` 抬不动它，只有 `--screen-info` 能（Chrome 142+，仅无头有效）。**四个 workArea 参数必须分开写**（`workAreaTop/Bottom/Left/Right`），写成 `workArea=` 会让 Chrome 直接启动失败。
+
 ## Puppeteer evaluate 约束（重要）
 
 - 在工具代码中，避免使用 `page.evaluate(() => { ... })` / `page.waitForFunction(() => { ... })` 的函数写法。

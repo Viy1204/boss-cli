@@ -167,8 +167,20 @@ boss-cli 基于 CDP 连接本机 Chrome，复用已有登录态，针对 Boss直
 **数据会上传到服务器吗？**
 不会。Cookie 和缓存仅存储在本地 `~/.boss-cli/`，CLI 不经过任何第三方服务器。
 
-**如何无头模式运行？**
-设置环境变量 `BOSS_BROWSER_HEADLESS=true`（默认 headful，便于扫码登录）。
+**浏览器窗口去哪了？怎么让它重新可见？**
+
+**默认无头**（浏览器在后台跑，看不见窗口）。这是有意的：有头窗口一启动就会抢走键盘焦点，打断你正在做的别的事。
+
+想看见窗口，设任意一个：
+
+```bash
+RECRUIT_BROWSER_HIDDEN=false boss list     # 招聘工具链共读的开关（boss / liepin / DSH 面板都认）
+BOSS_BROWSER_HEADLESS=false boss list      # 只影响 boss-cli，优先级更高
+```
+
+两个都不设时默认无头。`boss login` **不受影响** —— 扫码必须看得见，它会自己把无头实例关掉、以有头重启（登录态在 `~/.boss-cli/.cache/` 里，不会丢）。
+
+想看浏览器在做什么但不要窗口抢焦点，用 recruiting-copilot 的 DSH「招聘浏览器」面板：无头浏览器的实时画面推到 Web UI 里，能看也能点。
 
 **如何自定义操作蒙层品牌？**
 设置环境变量 `BOSS_CLI_AGENT_BRAND=你的品牌名`。

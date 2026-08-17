@@ -1,4 +1,4 @@
-import { detachBrowserSession, disconnectBrowserSession, ensureAndGetBrowser, ensureBrowserSession, getBrowserRef, getPageRef, setSessionPage, wasLastChromeLaunchHeadless, } from '../browser/index.js';
+import { detachBrowserSession, disconnectBrowserSession, ensureAndGetBrowser, ensureBrowserSession, getBrowserRef, getPageRef, setSessionPage, closeRemoteBrowser, probeRemoteHeadless, } from '../browser/index.js';
 const BOSS_LOGIN_URL = 'https://www.zhipin.com/web/user/?ka=header-login';
 async function pickExistingPage(browser) {
     const pages = (await browser.pages()).filter((p) => !p.isClosed());
@@ -29,19 +29,19 @@ async function pickExistingPage(browser) {
  * 不做登录态校验/等待/超时判断；成功与否由后续命令自行体现。
  */
 export async function runLogin() {
-    // 登录必须可见：即使之前已启动 headless 会话，也需要重启为 headful。
+    // 登录必须可见：已在跑的实例若是无头，先关掉，再以有头重启。
+    //
+    // 判据必须读**进程外**的真实状态。此前这里用的是 `getBrowserRef()` 和
+    // `wasLastChromeLaunchHeadless()`，两者都是模块级变量——而 `boss login` 是独立的
+    // 一次性进程，刚起时它们必然是空的，整段检测形同不存在；随后 `ensureAndGetBrowser()`
+    // 会 probe 到常驻的无头实例直接 connect，把登录页开在用户看不见的浏览器里。
+    // 现在改问端口上那只浏览器自己：`/json/version` 的 UA 含 HeadlessChrome 即为无头。
     process.env.BOSS_BROWSER_HEADLESS = 'false';
-    const existing = getBrowserRef();
-    try {
-        const args = existing?.process?.()?.spawnargs ?? [];
-        const isHeadless = wasLastChromeLaunchHeadless() ||
-            args.some((a) => typeof a === 'string' && a.startsWith('--headless'));
-        if (existing?.connected && isHeadless) {
-            await disconnectBrowserSession().catch(() => { });
-        }
-    }
-    catch {
-        // ignore
+    if ((await probeRemoteHeadless()) === true) {
+        // 登录态在 user-data-dir 里，关掉重启不会丢。先清掉本进程内可能持有的引用
+        // （交互模式下先跑过别的命令），再关远端那只。
+        await disconnectBrowserSession().catch(() => { });
+        await closeRemoteBrowser().catch(() => { });
     }
     let browser = null;
     try {

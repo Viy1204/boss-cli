@@ -4,7 +4,7 @@
  */
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
-import { detachBrowserSession } from '../browser/index.js';
+import { detachBrowserSession, resolveHeadlessFromEnv } from '../browser/index.js';
 import {
   implChatAction,
   implLogin,
@@ -37,14 +37,12 @@ class CliError extends Error {
   }
 }
 
-function envTruthy(name: string): boolean {
-  const v = (process.env[name] ?? '').trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'yes' || v === 'y';
-}
-
-/** 默认有头；仅当环境变量为真时启用无头（与 `connectBrowser` 读取的 `BOSS_BROWSER_HEADLESS` 一致）。 */
+/**
+ * 默认无头；`BOSS_BROWSER_HEADLESS` 显式覆盖，否则跟随共读的 `RECRUIT_BROWSER_HIDDEN`。
+ * 与 `connectBrowser` 用的 `resolveHeadlessFromEnv` 同一套优先级。
+ */
 function shouldRunHeadless(): boolean {
-  return envTruthy('BOSS_BROWSER_HEADLESS');
+  return resolveHeadlessFromEnv();
 }
 
 function configureHeadlessForCommand(cmd: string): void {
