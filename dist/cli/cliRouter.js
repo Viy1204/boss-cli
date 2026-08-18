@@ -8,6 +8,7 @@ import { closeRemoteBrowser, detachBrowserSession, probeRemoteHeadless, REMOTE_D
 import { implChatAction, implLogin, implListCandidates, implListUnreadCandidates, implOpenChatByIndex, implListPositions, implListPositionsWithOptions, implNormalSearch, implOpenChat, implRecommend, implPreview, implRecommendGreet, implSetBaiduCredentials, implBossSearch, implSendMessage, } from '../toolset/index.js';
 import { printBossInteractiveBanner } from './banner.js';
 import { printPackageUpdateNoticeIfDue, printVersionInfo, runPackageUpdate, } from './version.js';
+import { acquireBusyLock, releaseBusyLock } from '../common/busy_lock.js';
 class CliError extends Error {
     constructor(message) {
         super(message);
@@ -634,11 +635,15 @@ export async function runCli(argv) {
         printHelp();
         return;
     }
+    // 告诉 DSH 面板「这条命令正在操作这只浏览器」：面板切换有头/无头要关掉浏览器
+    // 重开，会打断我们，所以它需要一个能看见的信号（见 common/busy_lock.ts）。
+    acquireBusyLock(argv[0] ?? '');
     try {
         await runOneCommand(argv);
     }
     finally {
         await cleanupAfterCommand(argv[0] ?? '', true);
+        releaseBusyLock();
     }
 }
 //# sourceMappingURL=cliRouter.js.map
