@@ -224,6 +224,11 @@ git push origin v0.7.0
 tag 推送后，workflow 会自动安装依赖、构建、检查 npm 版本、发布、更新 `latest` dist-tag，并创建或更新 GitHub Release。
 本地不需要手动执行 `npm publish`。
 
+**别用 `gh release create` 顺带建 tag**：那样 tag 是 Releases API 在服务端建的，
+GitHub **不会**为它发 `push` 事件，`on: push.tags` 因此不触发（v0.6.8 和 v0.7.0 就是这么漏掉的，
+最后靠手动 `workflow_dispatch` 才发出去）。workflow 现在额外挂了 `release: [published]` 兜底，
+所以先建 Release 也能发；但推荐仍是先 `git push origin vX.Y.Z`，让 Release 由 workflow 自动生成。
+
 **发的是哪个包**：workflow 用 `node -p "require('./package.json').name"` 取包名，所以本 fork 发布的是
 **`@viyzhu/boss-cli-fork`**，不是上游的 `@joohw/boss-cli`。（此处此前写着上游包名，已订正。）
 

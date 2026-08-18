@@ -4,6 +4,10 @@ on:
   push:
     tags:
       - 'v*'
+  # `gh release create vX.Y.Z` 建的 tag 是服务端 Releases API 建的，不发 push 事件，
+  # 所以只挂 push.tags 时手动建 Release 这条发版路径永远不会触发（实测：v0.6.8 / v0.7.0 零 run）。
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       version:
@@ -108,6 +112,7 @@ jobs:
         run: npm pack --dry-run --json
 
       - name: Publish npm package
+        id: npm_publish
         if: ${{ steps.npm_gate.outputs.publish == 'true' && steps.npm_version.outputs.exists != 'true' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -123,31 +128,46 @@ jobs:
           pkg="$(node -p "require('./package.json').name")"
           npm dist-tag add "${pkg}@${target}" latest --registry=https://registry.npmjs.org/
 
+      # 判据是 `npm publish` / `npm dist-tag add` 的退出码，不是 registry 元数据什么时候可读。
+      # registry 是最终一致的（首发或新包尤其慢），元数据没跟上不代表发布失败，
+      # 所以这里只在「本次真的执行过 publish」时把超时降级成 warning。
       - name: Verify npm latest
         if: ${{ steps.npm_gate.outputs.publish == 'true' }}
+        env:
+          PUBLISHED_THIS_RUN: ${{ steps.npm_publish.outcome }}
         run: |
           set -euo pipefail
           target="${{ steps.version.outputs.target }}"
           pkg="$(node -p "require('./package.json').name")"
-          for attempt in $(seq 1 10); do
-            if current="$(npm view "$pkg" version --registry=https://registry.npmjs.org/)" &&
-              tags="$(npm dist-tag ls "$pkg" --registry=https://registry.npmjs.org/)"; then
-              latest="$(printf '%s\n' "$tags" | awk -F': ' '$1 == "latest" { print $2 }')"
-              if [ "$current" = "$target" ] && [ "$latest" = "$target" ]; then
+          encoded="${pkg//\//%2f}"
+          for attempt in $(seq 1 12); do
+            # 绕开 CDN 缓存直读 packument，npm view 读到的可能是过期副本
+            if doc="$(curl -fsSL -H 'Cache-Control: no-cache' "https://registry.npmjs.org/${encoded}")"; then
+              latest="$(printf '%s' "$doc" | jq -r '.["dist-tags"].latest // ""')"
+              known="$(printf '%s' "$doc" | jq -r --arg v "$target" '.versions | has($v)')"
+              if [ "$latest" = "$target" ] && [ "$known" = "true" ]; then
+                echo "${pkg}@${target} is published and tagged latest."
                 exit 0
               fi
-              echo "npm registry reports version=${current}, latest=${latest}; waiting for ${target} (attempt ${attempt}/10)..."
+              echo "npm registry reports latest=${latest:-<none>}, ${target} known=${known}; waiting (attempt ${attempt}/12)..."
             else
-              echo "npm registry metadata read failed (attempt ${attempt}/10); retrying in 6s..."
+              echo "npm registry metadata read failed (attempt ${attempt}/12); retrying..."
             fi
-            sleep 6
+            sleep $(( attempt * 5 > 60 ? 60 : attempt * 5 ))
           done
-          echo "Timed out waiting for ${pkg} npm latest to become ${target}" >&2
+          message="${pkg} npm latest did not converge to ${target} within ~6min"
+          if [ "$PUBLISHED_THIS_RUN" = "success" ]; then
+            echo "::warning::${message}; npm publish itself succeeded, treating as registry propagation lag."
+            exit 0
+          fi
+          echo "${message}, and no publish ran in this job." >&2
           exit 1
 
   release:
     needs: publish
-    if: ${{ startsWith(github.ref, 'refs/tags/v') && needs.publish.result == 'success' }}
+    # release 事件下 Release 已经存在（且可能带人写的说明），重跑 generate-notes 会把它覆盖掉，
+    # 所以这个 job 只服务「先推 tag」那条路径。
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.publish.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Create or update GitHub Release
