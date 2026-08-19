@@ -29,10 +29,19 @@ export function clearSpawnedChromeProcessRef() {
  * 是否以无头（隐藏）方式启动。
  *
  * 优先级：`BOSS_BROWSER_HEADLESS`（本 CLI 专属，显式覆盖）> `RECRUIT_BROWSER_HIDDEN`
- * （招聘工具链共读的单一来源）> 默认 **true**。
+ * （招聘工具链共读的单一来源）> 默认 **false（有头）**，与上游 `joohw/boss-cli` 一致。
  *
- * 默认隐藏是有意的：招聘浏览器不该抢前景与键盘焦点。想看见窗口设
- * `RECRUIT_BROWSER_HIDDEN=false`（或 `BOSS_BROWSER_HEADLESS=false`）。
+ * **2026-08-19：默认从无头翻回有头。** 本 fork 曾把默认改成无头，理由是招聘浏览器不该
+ * 抢前景与键盘焦点，当时对代价的评估是「UA 里多个 `HeadlessChrome`，没有观测到实际危害」。
+ * 现在观测到了：
+ *
+ * - 一个账号被 BOSS 限制 web 端登录，页面文案明确写「检测到您的账号存在使用第三方招聘
+ *   管理系统、插件、外挂、软件等辅助工具」——判定的是**工具指纹**，不是打招呼频率。
+ * - 另一个团队用上游版（默认有头）长期没事，他们的 AI 擅自改走无头之后当天封号。
+ *
+ * 两个独立样本都指向无头。抢焦点是体验问题，被限 web 端登录是业务问题。
+ * 真要无头，显式设 `RECRUIT_BROWSER_HIDDEN=true`（或 `BOSS_BROWSER_HEADLESS=true`），
+ * 并且清楚这是在拿账号冒险。
  */
 export function resolveHeadlessFromEnv() {
     const own = process.env.BOSS_BROWSER_HEADLESS?.trim().toLowerCase();
@@ -40,7 +49,8 @@ export function resolveHeadlessFromEnv() {
         return true;
     if (own === 'false' || own === '0' || own === 'no' || own === 'n')
         return false;
-    return process.env.RECRUIT_BROWSER_HIDDEN?.trim().toLowerCase() !== 'false';
+    const shared = process.env.RECRUIT_BROWSER_HIDDEN?.trim().toLowerCase();
+    return shared === 'true' || shared === '1' || shared === 'yes' || shared === 'y';
 }
 /**
  * 无头模式追加的启动参数。
@@ -243,7 +253,7 @@ export const LAUNCH_ARGS_ALLOW_ALL_CORS = [
  * - `BOSS_BROWSER_DISABLE_GPU` — 设为 `true` 时附加 `--disable-gpu`
  *
  * 若以上均未设置，会按系统尝试常见 Chrome / Edge / Chromium 安装路径。
- * - `RECRUIT_BROWSER_HIDDEN` — 招聘工具链共读的隐藏开关；**默认无头**，设为 `false` 退回有界面。
+ * - `RECRUIT_BROWSER_HIDDEN` — 招聘工具链共读的隐藏开关；**默认有界面**，设为 `true` 才无头（有账号风险，见 `resolveHeadlessFromEnv`）。
  * - `BOSS_BROWSER_HEADLESS` — 本 CLI 专属覆盖项，优先级高于 `RECRUIT_BROWSER_HIDDEN`。
  * - `BOSS_BROWSER_VIEWPORT_WIDTH` / `BOSS_BROWSER_VIEWPORT_HEIGHT` — 启动时显式指定视口；未设置时不覆盖浏览器窗口尺寸
  */

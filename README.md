@@ -167,22 +167,29 @@ boss-cli 基于 CDP 连接本机 Chrome，复用已有登录态，针对 Boss直
 **数据会上传到服务器吗？**
 不会。Cookie 和缓存仅存储在本地 `~/.boss-cli/`，CLI 不经过任何第三方服务器。
 
-**浏览器窗口去哪了？怎么让它重新可见？**
+**浏览器是有头还是无头？能不能藏起来？**
 
-**默认无头**（浏览器在后台跑，看不见窗口）。这是有意的：有头窗口一启动就会抢走键盘焦点，打断你正在做的别的事。
+**默认有头**（真窗口，和上游一致）。代价是窗口启动时会抢一次键盘焦点。
 
-想看见窗口，设任意一个：
+**不建议改成无头。** 本 fork 2026-08-19 之前默认无头，理由是不抢焦点；后来观测到两个独立的账号事故都指向无头，于是翻回有头：
+
+- 一个账号被 BOSS 限制 **web 端登录**，页面文案明确写「检测到您的账号存在使用第三方招聘管理系统、插件、外挂、软件等辅助工具」——判定的是**工具指纹**，不是打招呼频率。
+- 另一个团队用上游版（默认有头）长期没事，他们的 AI 擅自改走无头之后当天封号。
+
+无头 Chrome 的 `User-Agent` 会自报 `HeadlessChrome/<ver>`，而 Client Hints 仍说 `Google Chrome`——这个自相矛盾本身就是强信号。
+
+真要无头（清楚这是在拿账号冒险）：
 
 ```bash
-RECRUIT_BROWSER_HIDDEN=false boss list     # 招聘工具链共读的开关（boss / liepin / DSH 面板都认）
-BOSS_BROWSER_HEADLESS=false boss list      # 只影响 boss-cli，优先级更高
+RECRUIT_BROWSER_HIDDEN=true boss list      # 招聘工具链共读的开关（boss / liepin / DSH 面板都认）
+BOSS_BROWSER_HEADLESS=true boss list       # 只影响 boss-cli，优先级更高
 ```
 
-两个都不设时默认无头。**换了变量不会让已经在跑的那只变可见** —— 先 `boss shutdown` 关掉它，下条命令才会按新模式重启。
+**换了变量不会让已经在跑的那只切换模式** —— 先 `boss shutdown` 关掉它，下条命令才会按新模式重启。
 
 浏览器跨命令常驻（命令结束只断 CDP、不关窗口），跑完想释放内存就 `boss shutdown`（登录态保留）。
 
-`boss login` **不受影响** —— 扫码必须看得见，它会自己把无头实例关掉、以有头重启（登录态在 `~/.boss-cli/.cache/` 里，不会丢）。
+`boss login` **一直是有头的** —— 扫码必须看得见。真开了无头，它也会自己把无头实例关掉、以有头重启（登录态在 `~/.boss-cli/.cache/` 里，不会丢）。
 
 想看浏览器在做什么但不要窗口抢焦点，用 recruiting-copilot 的 DSH「招聘浏览器」面板：无头浏览器的实时画面推到 Web UI 里，能看也能点。
 

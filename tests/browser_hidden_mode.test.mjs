@@ -24,13 +24,20 @@ function withEnv(vars, fn) {
   }
 }
 
-test('默认无头：招聘浏览器不该抢前景与键盘焦点', () => {
-  withEnv({}, () => assert.equal(resolveHeadlessFromEnv(), true));
+test('默认有头：无头的 HeadlessChrome UA 会被判成第三方辅助工具，代价比抢焦点大得多', () => {
+  withEnv({}, () => assert.equal(resolveHeadlessFromEnv(), false));
 });
 
-test('RECRUIT_BROWSER_HIDDEN=false 退回有头', () => {
-  withEnv({ RECRUIT_BROWSER_HIDDEN: 'false' }, () => assert.equal(resolveHeadlessFromEnv(), false));
-  withEnv({ RECRUIT_BROWSER_HIDDEN: 'FALSE' }, () => assert.equal(resolveHeadlessFromEnv(), false));
+test('无头必须显式开启，各种真值写法都认', () => {
+  for (const v of ['true', 'TRUE', '1', 'yes', 'y']) {
+    withEnv({ RECRUIT_BROWSER_HIDDEN: v }, () => assert.equal(resolveHeadlessFromEnv(), true), v);
+  }
+});
+
+test('共读变量给假值或无意义值都保持有头', () => {
+  for (const v of ['false', 'FALSE', '0', 'no', 'maybe', '']) {
+    withEnv({ RECRUIT_BROWSER_HIDDEN: v }, () => assert.equal(resolveHeadlessFromEnv(), false), v);
+  }
 });
 
 test('BOSS_BROWSER_HEADLESS 优先级高于共读变量，两个方向都生效', () => {
