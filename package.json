@@ -1,6 +1,6 @@
 {
   "name": "@viyzhu/boss-cli-fork",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Boss直聘自动化 CLI（@joohw/boss-cli 的 fork，含风控页反弹熔断等修复）：批量发消息、自动打招呼、候选人管理、深度搜索。基于 Puppeteer/CDP 驱动本机 Chrome，支持 AI Agent 编排",
   "keywords": [
     "boss",
