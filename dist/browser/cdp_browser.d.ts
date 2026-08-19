@@ -9,8 +9,8 @@ export declare function clearSpawnedChromeProcessRef(): void;
 /**
  * 是否以无头（隐藏）方式启动。
  *
- * 优先级：`BOSS_BROWSER_HEADLESS`（本 CLI 专属，显式覆盖）> `RECRUIT_BROWSER_HIDDEN`
- * （招聘工具链共读的单一来源）> 默认 **false（有头）**，与上游 `joohw/boss-cli` 一致。
+ * 优先级：`BOSS_BROWSER_HEADLESS`（本 CLI 专属）> `RECRUIT_BROWSER_HIDDEN`（招聘工具链共读的
+ * 统一覆盖开关，**只在显式设置时生效**）> **BOSS 自己的默认：有头**，与上游 `joohw/boss-cli` 一致。
  *
  * **2026-08-19：默认从无头翻回有头。** 本 fork 曾把默认改成无头，理由是招聘浏览器不该
  * 抢前景与键盘焦点，当时对代价的评估是「UA 里多个 `HeadlessChrome`，没有观测到实际危害」。
@@ -23,6 +23,9 @@ export declare function clearSpawnedChromeProcessRef(): void;
  * 两个独立样本都指向无头。抢焦点是体验问题，被限 web 端登录是业务问题。
  * 真要无头，显式设 `RECRUIT_BROWSER_HIDDEN=true`（或 `BOSS_BROWSER_HEADLESS=true`），
  * 并且清楚这是在拿账号冒险。
+ *
+ * **liepin-cli 那边默认仍是无头**：猎聘的风控形态一次都没观测过，没有证据支持翻它的默认。
+ * 所以共读变量是「统一覆盖」而非「提供默认值」——不设时两个 CLI 各用自己的默认。
  */
 export declare function resolveHeadlessFromEnv(): boolean;
 /**

@@ -178,6 +178,8 @@ boss-cli 基于 CDP 连接本机 Chrome，复用已有登录态，针对 Boss直
 
 无头 Chrome 的 `User-Agent` 会自报 `HeadlessChrome/<ver>`，而 Client Hints 仍说 `Google Chrome`——这个自相矛盾本身就是强信号。
 
+**注意 liepin-cli 那边默认仍是无头**：猎聘的风控形态一次都没观测过，没有证据支持翻它的默认。所以 `RECRUIT_BROWSER_HIDDEN` 的语义是**统一覆盖开关**而非「提供默认值」——不设时两个 CLI 各用自己的默认（boss 有头、liepin 无头），显式设了才把两家拉平。
+
 真要无头（清楚这是在拿账号冒险）：
 
 ```bash
@@ -191,7 +193,7 @@ BOSS_BROWSER_HEADLESS=true boss list       # 只影响 boss-cli，优先级更�
 
 `boss login` **一直是有头的** —— 扫码必须看得见。真开了无头，它也会自己把无头实例关掉、以有头重启（登录态在 `~/.boss-cli/.cache/` 里，不会丢）。
 
-想看浏览器在做什么但不要窗口抢焦点，用 recruiting-copilot 的 DSH「招聘浏览器」面板：无头浏览器的实时画面推到 Web UI 里，能看也能点。
+想在不切窗口的前提下看浏览器在做什么，用 recruiting-copilot 的 DSH「招聘浏览器」面板：把画面推到 Web UI 里。**面板默认折叠、默认只读**——在面板里手动操作不受本 CLI 那套页面守卫的保护（守卫挂在 CLI 进程的 CDP session 上，进程一退出就全失效），所以招聘动作请走命令。
 
 **如何自定义操作蒙层品牌？**
 设置环境变量 `BOSS_CLI_AGENT_BRAND=你的品牌名`。

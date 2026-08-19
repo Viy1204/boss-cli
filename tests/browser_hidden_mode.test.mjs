@@ -34,7 +34,7 @@ test('无头必须显式开启，各种真值写法都认', () => {
   }
 });
 
-test('共读变量给假值或无意义值都保持有头', () => {
+test('共读变量给假值或无意义值都保持有头（无意义值回落到 BOSS 自己的默认）', () => {
   for (const v of ['false', 'FALSE', '0', 'no', 'maybe', '']) {
     withEnv({ RECRUIT_BROWSER_HIDDEN: v }, () => assert.equal(resolveHeadlessFromEnv(), false), v);
   }
