@@ -45,8 +45,8 @@ class CliError extends Error {
 }
 
 /**
- * 默认无头；`BOSS_BROWSER_HEADLESS` 显式覆盖，否则跟随共读的 `RECRUIT_BROWSER_HIDDEN`。
- * 与 `connectBrowser` 用的 `resolveHeadlessFromEnv` 同一套优先级。
+ * 默认有头；`BOSS_BROWSER_HEADLESS` 显式覆盖，否则跟随共读的 `RECRUIT_BROWSER_HIDDEN`。
+ * 与 `connectBrowser` 用的 `resolveHeadlessFromEnv` 同一套优先级（默认翻回有头的原因见那里）。
  */
 function shouldRunHeadless(): boolean {
   return resolveHeadlessFromEnv();
@@ -148,7 +148,7 @@ function printHelp(): void {
       使用 npm 安装最新版 boss-cli
   boss shutdown
       关掉常驻的浏览器（登录态保留，下条命令会自动重新拉起）
-      浏览器默认无头且跨命令常驻；想看见窗口用 RECRUIT_BROWSER_HIDDEN=false
+      浏览器默认有头（真窗口）且跨命令常驻；无头有账号被限风险，别设 RECRUIT_BROWSER_HIDDEN=true
   boss login
       打开登录页（需要用户在浏览器中自行完成登录，这个命令会直接返回）
   boss list [--unread]
