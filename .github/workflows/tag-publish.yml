@@ -71,8 +71,17 @@ jobs:
             exit 1
           fi
 
+          # 预发布版（0.7.2-rc.1 之类）发到 `next`，不能顶掉 `latest`，
+          # 否则所有 `npm i -g` 的人都会被换成未验证的版本。
+          if [[ "$target_version" == *-* ]]; then
+            dist_tag="next"
+          else
+            dist_tag="latest"
+          fi
+
           echo "current=$current_version" >> "$GITHUB_OUTPUT"
           echo "target=$target_version" >> "$GITHUB_OUTPUT"
+          echo "dist_tag=$dist_tag" >> "$GITHUB_OUTPUT"
 
       - name: Sync package version
         if: ${{ steps.npm_gate.outputs.publish == 'true' }}
@@ -116,46 +125,48 @@ jobs:
         if: ${{ steps.npm_gate.outputs.publish == 'true' && steps.npm_version.outputs.exists != 'true' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+        run: npm publish --access public --tag "${{ steps.version.outputs.dist_tag }}"
 
-      - name: Update npm latest dist-tag
+      - name: Update npm dist-tag
         if: ${{ steps.npm_gate.outputs.publish == 'true' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           target="${{ steps.version.outputs.target }}"
+          dist_tag="${{ steps.version.outputs.dist_tag }}"
           pkg="$(node -p "require('./package.json').name")"
-          npm dist-tag add "${pkg}@${target}" latest --registry=https://registry.npmjs.org/
+          npm dist-tag add "${pkg}@${target}" "$dist_tag" --registry=https://registry.npmjs.org/
 
       # 判据是 `npm publish` / `npm dist-tag add` 的退出码，不是 registry 元数据什么时候可读。
       # registry 是最终一致的（首发或新包尤其慢），元数据没跟上不代表发布失败，
       # 所以这里只在「本次真的执行过 publish」时把超时降级成 warning。
-      - name: Verify npm latest
+      - name: Verify npm dist-tag
         if: ${{ steps.npm_gate.outputs.publish == 'true' }}
         env:
           PUBLISHED_THIS_RUN: ${{ steps.npm_publish.outcome }}
         run: |
           set -euo pipefail
           target="${{ steps.version.outputs.target }}"
+          dist_tag="${{ steps.version.outputs.dist_tag }}"
           pkg="$(node -p "require('./package.json').name")"
           encoded="${pkg//\//%2f}"
           for attempt in $(seq 1 12); do
             # 绕开 CDN 缓存直读 packument，npm view 读到的可能是过期副本
             if doc="$(curl -fsSL -H 'Cache-Control: no-cache' "https://registry.npmjs.org/${encoded}")"; then
-              latest="$(printf '%s' "$doc" | jq -r '.["dist-tags"].latest // ""')"
+              tagged="$(printf '%s' "$doc" | jq -r --arg t "$dist_tag" '.["dist-tags"][$t] // ""')"
               known="$(printf '%s' "$doc" | jq -r --arg v "$target" '.versions | has($v)')"
-              if [ "$latest" = "$target" ] && [ "$known" = "true" ]; then
-                echo "${pkg}@${target} is published and tagged latest."
+              if [ "$tagged" = "$target" ] && [ "$known" = "true" ]; then
+                echo "${pkg}@${target} is published and tagged ${dist_tag}."
                 exit 0
               fi
-              echo "npm registry reports latest=${latest:-<none>}, ${target} known=${known}; waiting (attempt ${attempt}/12)..."
+              echo "npm registry reports ${dist_tag}=${tagged:-<none>}, ${target} known=${known}; waiting (attempt ${attempt}/12)..."
             else
               echo "npm registry metadata read failed (attempt ${attempt}/12); retrying..."
             fi
             sleep $(( attempt * 5 > 60 ? 60 : attempt * 5 ))
           done
-          message="${pkg} npm latest did not converge to ${target} within ~6min"
+          message="${pkg} npm ${dist_tag} did not converge to ${target} within ~6min"
           if [ "$PUBLISHED_THIS_RUN" = "success" ]; then
             echo "::warning::${message}; npm publish itself succeeded, treating as registry propagation lag."
             exit 0

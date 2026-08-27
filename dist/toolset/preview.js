@@ -64,21 +64,23 @@ export async function runPreview(options) {
             ensureAppDataLayout();
             const fileName = `preview-${safeResumeScreenshotFileBase(target)}-${Date.now()}.png`;
             const absPath = join(RESUME_SCREENSHOTS_DIR, fileName);
-            const ok = await captureCResumeIframeToFile(page, savedOriginal, absPath);
-            if (!ok) {
+            const capture = await captureCResumeIframeToFile(page, savedOriginal, absPath);
+            if (!capture.ok) {
                 await closeCResumePanel(page);
-                throw new Error('在线简历 iframe 截图失败。');
+                throw new Error(capture.detail ?? '在线简历 iframe 截图失败。');
             }
             const disclaimer = '说明：平台对在线简历的每日可查看次数有限，请按需使用、谨慎查看。';
+            const head = [jobLine, `简历预览截图：${absPath}`, ''];
+            if (capture.detail) {
+                head.push(`⚠️ ${capture.detail}`, '');
+            }
             if (!isResumeOcrEnabled()) {
-                return [jobLine, `简历预览截图：${absPath}`, '', disclaimer].join('\n');
+                return [...head, disclaimer].join('\n');
             }
             try {
                 const ocr = await ocrResumePngToTextFile(absPath);
                 return [
-                    jobLine,
-                    `简历预览截图：${absPath}`,
-                    '',
+                    ...head,
                     '在线简历 OCR 正文：',
                     '',
                     ocr.text,

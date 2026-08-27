@@ -198,6 +198,21 @@ BOSS_BROWSER_HEADLESS=true boss list       # 只影响 boss-cli，优先级更�
 **如何自定义操作蒙层品牌？**
 设置环境变量 `BOSS_CLI_AGENT_BRAND=你的品牌名`。
 
+**`boss preview` 报「截图疑似空壳」是什么意思？**
+
+截出来的 PNG 只有水印、没有简历正文。连续 preview 很多人时会出现（[recruiting-copilot#37](https://github.com/Viy1204/recruiting-copilot/issues/37)：约第 9 人起稳定复现，但**人眼看浏览器里正文是在的**，所以是截图路径的问题，不是平台不让看）。
+
+0.7.2 起遇到这种情况会**直接报错**，不再假报成功；PNG 仍然落盘，方便你自己看。判据是 PNG 字节数 / 截图像素数，两个可调项：
+
+```bash
+BOSS_RESUME_BLANK_BYTES_PER_PIXEL=0.015   # 空壳阈值，设 0 关掉这个检查
+BOSS_RESUME_SCREENSHOT_VIEWPORT_HEIGHT=1600   # 截图时临时拉高的视口高度（默认 5000）
+```
+
+如果报错里还提到「有 N 个可见在线简历面板」，说明上一次弹层没关净、截到了残留的旧面板 —— `boss shutdown` 重启浏览器可恢复。
+
+**别把 preview 当批量工具**：它吃平台的每日查看额度，也是最容易踩上面这些坑的路径。先用列表卡片做硬否决，只对强候选 preview，其余走「打招呼 → 要简历附件」。
+
 ---
 
 ## 数据目录

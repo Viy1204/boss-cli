@@ -544,9 +544,13 @@ async function captureOnlineResumeScreenshot(page: Page, candidateLabel: string)
   const fileName = `online-resume-${safeResumeScreenshotFileBase(candidateLabel)}-${Date.now()}.png`;
   const absPath = join(RESUME_SCREENSHOTS_DIR, fileName);
 
-  const ok = await captureCResumeIframeToFile(page, savedViewport, absPath);
-  if (!ok) {
+  const capture = await captureCResumeIframeToFile(page, savedViewport, absPath);
+  if (!capture.ok) {
     await closeCResumePanel(page);
+    // 空壳（只有水印）必须报错，不能当成「没找到入口」而静默返回，否则调用方会以为截图有效。
+    if (capture.blankShell) {
+      throw new Error(capture.detail ?? '在线简历截图疑似空壳。');
+    }
     return null;
   }
   return absPath;
