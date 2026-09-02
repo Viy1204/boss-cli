@@ -10,8 +10,11 @@ export {
   type BossViewportSnapshot,
 } from './viewport_temp.js';
 export {
+  bringToFrontUnlessMinimized,
+  type BringToFrontOutcome,
   connectBrowser,
   createPageCDPSession,
+  decideBringToFront,
   defaultViewportFromEnv,
   LAUNCH_ARGS_ALLOW_ALL_CORS,
   LAUNCH_ARGS_LESS_AUTOMATION,
@@ -19,7 +22,9 @@ export {
   closeRemoteBrowser,
   probeRemoteHeadless,
   resolveHeadlessFromEnv,
+  resolveNoForegroundFromEnv,
   REMOTE_DEBUGGING_PORT,
+  withWindowVisible,
 } from './cdp_browser.js';
 export {
   detachBrowserSession,

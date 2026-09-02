@@ -2,7 +2,11 @@
  * 在线简历预览：须在「推荐」页、「深度搜索 aiform」页或「常规搜索」页且列表已加载；不自动跳转，否则报错。
  */
 import { join } from 'node:path';
-import { ONLINE_RESUME_IFRAME_WAIT_MAX_MS, snapshotBossPageViewport } from '../browser/index.js';
+import {
+  ONLINE_RESUME_IFRAME_WAIT_MAX_MS,
+  snapshotBossPageViewport,
+  withWindowVisible,
+} from '../browser/index.js';
 import { withBossSessionPage } from '../common/boss_session_page.js';
 import {
   closeBossPaywallPopupIfPresent,
@@ -45,7 +49,7 @@ export async function runPreview(options: PreviewOptions): Promise<string> {
     throw new Error('请提供候选人姓名。');
   }
   try {
-    return await withBossSessionPage(async (page) => {
+    return await withBossSessionPage((page) => withWindowVisible(page, async () => {
       const url = page.url();
       let jobLine: string;
       let savedOriginal: Awaited<ReturnType<typeof snapshotBossPageViewport>>;
@@ -123,7 +127,7 @@ export async function runPreview(options: PreviewOptions): Promise<string> {
         const msg = e instanceof Error ? e.message : String(e);
         throw new Error(`简历预览截图已保存，但 OCR 失败：${msg}`);
       }
-    });
+    }));
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     throw new Error(`简历预览失败：${message}`);

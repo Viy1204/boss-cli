@@ -10,6 +10,7 @@ import {
   getPageRef,
   setSessionPage,
 } from '../browser/browser_session.js';
+import { bringToFrontUnlessMinimized } from '../browser/cdp_browser.js';
 import { CONTEXT_DESTROY_RETRY_MS } from '../browser/human_delay.js';
 import { sleepRandom } from '../browser/timing.js';
 import { getBossPageRiskState, installBossPageGuards } from './boss_page_guards.js';
@@ -184,7 +185,7 @@ export async function withBossSessionPage<T>(
         page = (await pickExistingPage(browser)) ?? (await browser.newPage());
       }
       setSessionPage(page);
-      await page.bringToFront();
+      await bringToFrontUnlessMinimized(page);
 
       await installBossPageGuards(page);
 

@@ -5,6 +5,7 @@ import {
   selectAllModifierKey,
   sleepRandom,
   snapshotBossPageViewport,
+  withWindowVisible,
 } from '../browser/index.js';
 import { isBossChatIndexUrl } from '../common/auth.js';
 import {
@@ -507,6 +508,14 @@ async function getCandidateLabelForResumeShot(page: Page): Promise<string> {
  * 进入前记录视口（`snapshotBossPageViewport`，见 {@link captureCResumeIframeToFile}）。
  */
 async function captureOnlineResumeScreenshot(page: Page, candidateLabel: string): Promise<string | null> {
+  // 在线简历是 canvas，窗口最小化时不绘帧，整段流程都得在窗口可见时跑。
+  return withWindowVisible(page, () => captureOnlineResumeScreenshotVisible(page, candidateLabel));
+}
+
+async function captureOnlineResumeScreenshotVisible(
+  page: Page,
+  candidateLabel: string,
+): Promise<string | null> {
   ensureAppDataLayout();
 
   const savedViewport = await snapshotBossPageViewport(page);

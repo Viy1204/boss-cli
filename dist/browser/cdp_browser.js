@@ -394,6 +394,85 @@ export async function connectBrowser(options = {}) {
         throw e;
     }
 }
+/**
+ * 是否禁止 CLI 把 Boss 窗口抢到前台。
+ *
+ * 默认允许：`page.bringToFront()` 走 `Target.activateTarget`，Windows 上会把**最小化**的窗口
+ * 还原并夺取前台焦点。把 CLI 接进后台系统定时跑的人（例如把 boss-cli 打通到内部招聘系统）
+ * 会被每条命令弹一次窗口打断办公，所以给一个显式关闭项。
+ */
+export function resolveNoForegroundFromEnv() {
+    const v = process.env.BOSS_BROWSER_NO_FOREGROUND?.trim().toLowerCase();
+    return v === 'true' || v === '1' || v === 'yes' || v === 'y';
+}
+/**
+ * 判定这次要不要抢前台：环境变量关了 → 不抢；窗口已被人最小化 → 不抢（尊重人的选择）；
+ * 其余情况照旧。抽出来是为了让判定逻辑不依赖真实浏览器就能测。
+ */
+export function decideBringToFront(windowState, noForeground) {
+    if (noForeground)
+        return 'skipped-env';
+    if (windowState === 'minimized')
+        return 'skipped-minimized';
+    return 'raised';
+}
+/**
+ * `page.bringToFront()` 的替代：先问 `Browser.getWindowForTarget` 窗口状态，最小化就不动它。
+ * 单标签窗口下不抢前台对自动化没有影响；CDP 操作不需要窗口可见。
+ */
+export async function bringToFrontUnlessMinimized(page) {
+    const noForeground = resolveNoForegroundFromEnv();
+    let windowState;
+    if (!noForeground) {
+        const cdp = await page.createCDPSession();
+        try {
+            ({ windowState } = (await cdp.send('Browser.getWindowForTarget')).bounds);
+        }
+        finally {
+            await cdp.detach();
+        }
+    }
+    const outcome = decideBringToFront(windowState, noForeground);
+    if (outcome === 'raised')
+        await page.bringToFront();
+    return outcome;
+}
+/**
+ * 需要真实渲染的操作（在线简历 canvas、截图）在**最小化**窗口里会永远等不到新帧
+ * （实测 `Page.captureScreenshot` 第二次起就挂死）。这里临时把窗口还原成 normal，
+ * 跑完立刻再最小化——短暂闪一下，但不把「最小化」这个人的选择永久推翻。
+ * 窗口本来没最小化时什么都不做。
+ */
+export async function withWindowVisible(page, fn) {
+    const cdp = await page.createCDPSession();
+    let windowId;
+    let wasMinimized;
+    try {
+        const info = await cdp.send('Browser.getWindowForTarget');
+        windowId = info.windowId;
+        wasMinimized = info.bounds.windowState === 'minimized';
+        if (wasMinimized) {
+            await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } });
+        }
+    }
+    catch (e) {
+        await cdp.detach();
+        throw e;
+    }
+    try {
+        return await fn();
+    }
+    finally {
+        try {
+            if (wasMinimized) {
+                await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } });
+            }
+        }
+        finally {
+            await cdp.detach();
+        }
+    }
+}
 /** 对某一页创建原生 CDP Session（需要低层域如 `Network.*`、`Fetch.*` 时使用）。 */
 export async function createPageCDPSession(page) {
     return page.createCDPSession();

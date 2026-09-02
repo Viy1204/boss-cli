@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { ONLINE_RESUME_IFRAME_WAIT_MAX_MS, selectAllModifierKey, sleepRandom, snapshotBossPageViewport, } from '../browser/index.js';
+import { ONLINE_RESUME_IFRAME_WAIT_MAX_MS, selectAllModifierKey, sleepRandom, snapshotBossPageViewport, withWindowVisible, } from '../browser/index.js';
 import { isBossChatIndexUrl } from '../common/auth.js';
 import { closeBossPaywallPopupIfPresent, describeBossPaywallPopupIfPresent, waitForCResumeIframeOrPaywall, } from '../common/boss_paywall_popup.js';
 import { captureCResumeIframeToFile, closeCResumePanel, safeResumeScreenshotFileBase, waitForVisibleCResumeIframeReady, } from '../common/c_resume_capture.js';
@@ -442,6 +442,10 @@ async function getCandidateLabelForResumeShot(page) {
  * 进入前记录视口（`snapshotBossPageViewport`，见 {@link captureCResumeIframeToFile}）。
  */
 async function captureOnlineResumeScreenshot(page, candidateLabel) {
+    // 在线简历是 canvas，窗口最小化时不绘帧，整段流程都得在窗口可见时跑。
+    return withWindowVisible(page, () => captureOnlineResumeScreenshotVisible(page, candidateLabel));
+}
+async function captureOnlineResumeScreenshotVisible(page, candidateLabel) {
     ensureAppDataLayout();
     const savedViewport = await snapshotBossPageViewport(page);
     const opened = await page.evaluate(() => {

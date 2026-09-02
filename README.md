@@ -189,6 +189,14 @@ BOSS_BROWSER_HEADLESS=true boss list       # 只影响 boss-cli，优先级更�
 
 **换了变量不会让已经在跑的那只切换模式** —— 先 `boss shutdown` 关掉它，下条命令才会按新模式重启。
 
+**窗口会不会弹到前台？** 每条命令开头会把 Boss 标签页激活（`bringToFront`），Windows 上这会把**最小化**的窗口还原并抢焦点。现在的规则：窗口已被你最小化就不动它；想彻底禁止抢前台（比如把 CLI 接进后台系统定时跑），设：
+
+```bash
+BOSS_BROWSER_NO_FOREGROUND=true boss list
+```
+
+`boss login` 不受此开关影响，扫码必须看得见。
+
 浏览器跨命令常驻（命令结束只断 CDP、不关窗口），跑完想释放内存就 `boss shutdown`（登录态保留）。
 
 `boss login` **一直是有头的** —— 扫码必须看得见。真开了无头，它也会自己把无头实例关掉、以有头重启（登录态在 `~/.boss-cli/.cache/` 里，不会丢）。
