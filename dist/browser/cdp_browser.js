@@ -1,7 +1,8 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import readline from 'node:readline';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import puppeteer from 'puppeteer-core';
 import { BROWSER_USER_DATA_DIR, ensureAppDataLayout } from '../config.js';
 /** 与 @puppeteer/browsers 一致，解析 Chrome 启动日志中的 CDP WebSocket URL（可能在 stdout 或 stderr）。 */
@@ -208,6 +209,113 @@ function waitForDevToolsWebSocketUrl(proc, userDataDir, timeoutMs) {
         }
     });
 }
+const execFileAsync = promisify(execFile);
+/**
+ * 把 exe + argv 拼成一条 Windows 命令行（`CreateProcess` 的 `lpCommandLine` 语义）：
+ * 含空白或引号的参数整体加双引号，内部 `"` 前补反斜杠，结尾反斜杠成对翻倍。
+ *
+ * `--screen-info={0,0 1920x1080 workAreaBottom=40}` 这类带空格的参数不加引号会被拆成多个
+ * 参数，Chrome 直接启动失败。`spawn()` 在 Windows 上由 libuv 做同样的拼接，走 WMI 就得自己做。
+ */
+export function toWindowsCommandLine(exe, args) {
+    const quote = (s) => {
+        if (s.length > 0 && !/[\s"]/.test(s))
+            return s;
+        let out = '"';
+        let pendingBackslashes = 0;
+        for (const ch of s) {
+            if (ch === '\\') {
+                pendingBackslashes++;
+                continue;
+            }
+            if (ch === '"') {
+                out += '\\'.repeat(pendingBackslashes * 2 + 1) + '"';
+                pendingBackslashes = 0;
+                continue;
+            }
+            out += '\\'.repeat(pendingBackslashes) + ch;
+            pendingBackslashes = 0;
+        }
+        return out + '\\'.repeat(pendingBackslashes * 2) + '"';
+    };
+    return [exe, ...args].map(quote).join(' ');
+}
+/**
+ * Windows 上是否让浏览器脱离调用方的 Job Object（默认开；`BOSS_SPAWN_BREAKAWAY=false` 关）。
+ *
+ * recruiting-copilot#43（与 liepin-cli#21 同因）：从 AI Agent 宿主调用 CLI 时，宿主会把整棵
+ * 进程树放进一个 `KILL_ON_JOB_CLOSE` 的 Job Object。`spawn({ detached: true })` 在 Windows 上
+ * 只是新建进程组，**逃不出 Job**，于是 CLI 进程一结束 Chrome 就被连带 `TerminateProcess`：
+ * profile 留下 `exit_type: Crashed`，会话级 cookie 随进程消失，只能反复重新扫码——而高频
+ * 重登本身就是平台风控信号。
+ */
+export function shouldBreakawayFromJob() {
+    if (process.platform !== 'win32')
+        return false;
+    const v = process.env.BOSS_SPAWN_BREAKAWAY?.trim().toLowerCase();
+    return !(v === 'false' || v === '0' || v === 'no' || v === 'n');
+}
+/**
+ * 经 WMI `Win32_Process.Create` 拉起浏览器：进程由系统服务 `WmiPrvSE.exe` 创建，因此不在
+ * 调用方的 Job Object 里，但仍属于当前交互登录会话（有头窗口照常可见）。
+ * 命令行经环境变量交给 PowerShell，省掉再套一层引号转义。
+ *
+ * 起不来直接抛错，不静默退回 `spawn`：退回等于把 #43 原样带回来且无人察觉。
+ */
+async function spawnViaWmi(commandLine) {
+    let stdout;
+    try {
+        ({ stdout } = await execFileAsync('powershell.exe', [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            '$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create ' +
+                '-Arguments @{CommandLine=$env:BOSS_SPAWN_CMDLINE}; ' +
+                'if ($r.ReturnValue -ne 0) { exit 1 }; $r.ProcessId',
+        ], {
+            env: { ...process.env, BOSS_SPAWN_CMDLINE: commandLine },
+            timeout: 15_000,
+            windowsHide: true,
+        }));
+    }
+    catch (e) {
+        throw new Error(`经 WMI 启动浏览器失败（${e instanceof Error ? e.message : String(e)}）。` +
+            'WMI 用于让浏览器脱离调用方的 Job Object，否则 CLI 一退出 Chrome 就被连带杀掉、登录态丢失。' +
+            '若本机禁用了 WMI/PowerShell，可显式设 BOSS_SPAWN_BREAKAWAY=false 退回普通启动（届时 #43 会复现）。');
+    }
+    const pid = Number.parseInt(stdout.trim(), 10);
+    if (!Number.isFinite(pid) || pid <= 0) {
+        throw new Error(`WMI 已受理启动请求但未返回有效 PID（stdout: ${JSON.stringify(stdout)}）。`);
+    }
+    return pid;
+}
+/** 进程是否还活着（signal 0 只做存在性探测，不投递信号）。 */
+function isProcessAlive(pid) {
+    try {
+        process.kill(pid, 0);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+/**
+ * WMI 路径下没有子进程的 stdout/stderr 可读，改为轮询固定调试端口等待就绪。
+ * 端口本来就是固定的（见 `REMOTE_DEBUGGING_PORT`），不需要解析 Chrome 启动日志。
+ */
+async function waitForRemoteDebuggingWsEndpoint(pid, userDataDir, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        const wsUrl = await probeRemoteDebuggingWsEndpoint(REMOTE_DEBUGGING_PORT, 800);
+        if (wsUrl)
+            return wsUrl;
+        if (!isProcessAlive(pid)) {
+            throw new Error(`浏览器进程在就绪前退出：user-data-dir「${userDataDir}」可能正被另一只「无远程调试端口」的 Chrome 持有（Chrome 单例锁会让新进程把命令行交还给它后立刻退出）。请关闭占用该目录的 Chrome 窗口后重试。`);
+        }
+        await new Promise((r) => setTimeout(r, 300));
+    }
+    throw new Error(`等待浏览器在端口 ${REMOTE_DEBUGGING_PORT} 就绪超时（${timeoutMs}ms，PID ${pid}）。`);
+}
 /** 在未配置路径时，尝试常见安装位置（Chrome / Edge / Chromium）。 */
 function findLocalChromiumExecutable() {
     const candidates = [];
@@ -317,6 +425,8 @@ export async function connectBrowser(options = {}) {
     const disableWasm = process.env.BOSS_BROWSER_DISABLE_WASM === 'true' || process.env.BOSS_BROWSER_DISABLE_WASM === '1';
     const userArgs = [
         ...LAUNCH_ARGS_LESS_AUTOMATION,
+        // 上一只若被外力杀掉（Job Object 连带、任务管理器），别弹「要恢复页面吗？Chrome 未正确关闭」
+        '--hide-crash-restore-bubble',
         ...(headless ? LAUNCH_ARGS_HEADLESS_SCREEN : []),
         ...(disableGpu ? ['--disable-gpu'] : []),
         ...(disableWasm ? ['--js-flags=--noexpose_wasm'] : []),
@@ -333,6 +443,18 @@ export async function connectBrowser(options = {}) {
         .filter((a) => a !== '--enable-automation' && a !== 'about:blank' && a !== 'data:,');
     if (!chromeArgs.some((a) => a.startsWith('--remote-debugging-'))) {
         chromeArgs.push(`--remote-debugging-port=${REMOTE_DEBUGGING_PORT}`);
+    }
+    /**
+     * Windows 默认经 WMI 启动，让浏览器脱离调用方的 Job Object（见 `shouldBreakawayFromJob`）。
+     * 这条路径没有子进程句柄，因此既不会被 Job 连带杀掉，也不会有 stdio 管道拖住 Node 退出。
+     */
+    if (shouldBreakawayFromJob()) {
+        const pid = await spawnViaWmi(toWindowsCommandLine(executablePath, chromeArgs));
+        const wsUrl = await waitForRemoteDebuggingWsEndpoint(pid, userDataDir, LAUNCH_READY_MS);
+        return await puppeteer.connect({
+            browserWSEndpoint: wsUrl,
+            defaultViewport: launchViewportFromEnv(),
+        });
     }
     /**
      * 不使用 `puppeteer.launch()`：其依赖的 `@puppeteer/browsers` 会在 **Node 进程 `exit` 时 kill 浏览器子进程**，
@@ -358,9 +480,19 @@ export async function connectBrowser(options = {}) {
         clearSpawnedChromeProcessRef();
         throw e;
     }
+    /**
+     * `resume()` 排空管道（不读会把 Chrome 的 stderr 写满阻塞住），`unref()` 解掉管道对
+     * event loop 的引用——`proc.unref()` 只作用于子进程句柄，**解不掉 stdio 管道**，
+     * 少了这一步 Node 要等常驻 Chrome 退出才返回（#43 里「结果已打印却挂住」的直接原因）。
+     */
     try {
-        proc.stdout?.resume();
-        proc.stderr?.resume();
+        for (const s of [proc.stdout, proc.stderr]) {
+            if (!s)
+                continue;
+            s.resume();
+            // 运行时是 net.Socket（有 unref），Readable 的类型签名里没有
+            s.unref?.();
+        }
     }
     catch {
         /* ignore */

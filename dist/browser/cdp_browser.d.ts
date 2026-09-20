@@ -46,6 +46,24 @@ export declare function probeRemoteHeadless(port?: number, timeoutMs?: number): 
  * 登录态在 user-data-dir 里，不会因此丢失。
  */
 export declare function closeRemoteBrowser(port?: number): Promise<boolean>;
+/**
+ * 把 exe + argv 拼成一条 Windows 命令行（`CreateProcess` 的 `lpCommandLine` 语义）：
+ * 含空白或引号的参数整体加双引号，内部 `"` 前补反斜杠，结尾反斜杠成对翻倍。
+ *
+ * `--screen-info={0,0 1920x1080 workAreaBottom=40}` 这类带空格的参数不加引号会被拆成多个
+ * 参数，Chrome 直接启动失败。`spawn()` 在 Windows 上由 libuv 做同样的拼接，走 WMI 就得自己做。
+ */
+export declare function toWindowsCommandLine(exe: string, args: readonly string[]): string;
+/**
+ * Windows 上是否让浏览器脱离调用方的 Job Object（默认开；`BOSS_SPAWN_BREAKAWAY=false` 关）。
+ *
+ * recruiting-copilot#43（与 liepin-cli#21 同因）：从 AI Agent 宿主调用 CLI 时，宿主会把整棵
+ * 进程树放进一个 `KILL_ON_JOB_CLOSE` 的 Job Object。`spawn({ detached: true })` 在 Windows 上
+ * 只是新建进程组，**逃不出 Job**，于是 CLI 进程一结束 Chrome 就被连带 `TerminateProcess`：
+ * profile 留下 `exit_type: Crashed`，会话级 cookie 随进程消失，只能反复重新扫码——而高频
+ * 重登本身就是平台风控信号。
+ */
+export declare function shouldBreakawayFromJob(): boolean;
 /** 减轻「正受到自动测试软件的控制」提示与常见自动化特征（非万能，站点仍可能用其它方式检测）。手动开 Chrome 并接 CDP 时可复用。 */
 export declare const LAUNCH_ARGS_LESS_AUTOMATION: readonly ["--disable-infobars"];
 /** 仅用于本地调试：尽量放宽同源/CORS 限制，便于跨域 iframe/canvas 处理。 */
