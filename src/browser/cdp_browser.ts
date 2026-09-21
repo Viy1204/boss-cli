@@ -282,12 +282,27 @@ export function shouldBreakawayFromJob(): boolean {
  * 命令行经环境变量交给 PowerShell，省掉再套一层引号转义。
  *
  * 抛错由调用方接住并**显著告警后退回 `spawn`**，理由见 `warnBreakawayUnavailable`。
+ *
+ * **WMI 被策略拒时的备选（备查，未实现）**：`explorer.exe <临时 .cmd>` 借 shell 重新 parent，
+ * 同样能脱离调用方的 Job。recruiting-copilot#43 实测有效——心跳文件跨两次调用边界活了 33 秒，
+ * 同批对照组的普通 detached spawn 立即被杀。参数转义不要让 explorer 直接携带 chrome 的参数，
+ * 全写进 .cmd 内部；PID 靠调试端口回探，或让 .cmd 自己把子进程 pid 写进临时文件。
+ * **没实现是权衡后的结果**：留临时文件、拿不到可靠 pid、多一层 shell，而真正需要它的环境
+ * 恰恰是 WMI 起不来的那种——不值得为此把主路径复杂化。要用再说。
+ *
+ * 另两条已排除：`CREATE_BREAKAWAY_FROM_JOB` 死路（#43 实测 WinError 5，对照组只带
+ * `DETACHED_PROCESS` 成功 ⇒ 外层 Job 没设 `JOB_OBJECT_LIMIT_BREAKAWAY_OK`）；`schtasks`
+ * **未得出结论**（报告人宿主的程序黑名单把它拦在启动前，不是 Windows 拒的，别当成不可行的证据）。
  */
-async function spawnViaWmi(commandLine: string): Promise<number> {
+export async function spawnViaWmi(
+  commandLine: string,
+  /** 仅供测试注入必定失败的 stub；生产路径永远用默认值。 */
+  powershellExe = 'powershell.exe',
+): Promise<number> {
   let stdout: string;
   try {
     ({ stdout } = await execFileAsync(
-      'powershell.exe',
+      powershellExe,
       [
         '-NoProfile',
         '-NonInteractive',
@@ -332,7 +347,7 @@ async function spawnViaWmi(commandLine: string): Promise<number> {
  * 退回**只覆盖「WMI 创建进程失败」这一步**。进程已创建但调试端口没起来，仍然硬失败——
  * 那时候端口上可能已经有一只正在启动的 Chrome，再 spawn 一只会撞车。
  */
-function warnBreakawayUnavailable(cause: unknown): void {
+export function warnBreakawayUnavailable(cause: unknown): void {
   const reason = cause instanceof Error ? cause.message : String(cause);
   console.error(
     [
