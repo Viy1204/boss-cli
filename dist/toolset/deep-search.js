@@ -1083,7 +1083,9 @@ async function waitForAiFormJobDropdownReady(page) {
     })()`, { timeout: 8_000 });
 }
 async function waitForAiFormJobSearchResults(page, keyword) {
-    await page.waitForFunction(`((kw) => {
+    // 关键词内联，不能走入参：字符串 pageFunction 收不到，判据恒为真、等待变空转。详见 AGENTS.md。
+    await page.waitForFunction(`(() => {
+      const kw = ${JSON.stringify(keyword)};
       const norm = (v) => (v ?? "").replace(/\\s+/g, "").trim().toLowerCase();
       const rows = Array.from(
         document.querySelectorAll(
@@ -1095,14 +1097,14 @@ async function waitForAiFormJobSearchResults(page, keyword) {
         const label = norm(el.querySelector(".job-option-text, .label")?.textContent || el.textContent || "");
         return label.includes(norm(kw));
       });
-    })`, { timeout: 10_000 }, keyword);
+    })()`, { timeout: 10_000 });
 }
 async function waitForAiFormJobSelected(page, expectedLabel) {
-    await page.waitForFunction(`((label) => {
+    await page.waitForFunction(`(() => {
       const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
       const selected = norm(document.querySelector(".job-dropmenu-select .job-main-text")?.textContent);
-      return !!selected && selected === label;
-    })`, { timeout: 10_000 }, expectedLabel);
+      return !!selected && selected === ${JSON.stringify(expectedLabel)};
+    })()`, { timeout: 10_000 });
     await ensureInDeepSearchPage(page);
 }
 export async function selectAiFormJob(page, keyword) {

@@ -110,8 +110,10 @@ async function waitForRecommendJobDropdownReady(frame: Frame): Promise<void> {
 }
 
 async function waitForRecommendJobSearchResults(frame: Frame, keyword: string): Promise<void> {
+  // 关键词内联，不能走入参：字符串 pageFunction 收不到，判据恒为真、等待变空转。详见 AGENTS.md。
   await frame.waitForFunction(
-    `((kw) => {
+    `(() => {
+      const kw = ${JSON.stringify(keyword)};
       const norm = (v) => (v ?? "").replace(/\\s+/g, "").trim().toLowerCase();
       const rows = Array.from(document.querySelectorAll(".job-selecter-options .job-list .job-item"));
       if (rows.length === 0) return false;
@@ -120,21 +122,19 @@ async function waitForRecommendJobSearchResults(frame: Frame, keyword: string): 
         const label = norm(el.querySelector(".label")?.textContent || el.textContent || "");
         return label.includes(norm(kw));
       });
-    })`,
+    })()`,
     { timeout: 10_000 },
-    keyword,
   );
 }
 
 async function waitForRecommendJobSelected(frame: Frame, expectedLabel: string): Promise<void> {
   await frame.waitForFunction(
-    `((label) => {
+    `(() => {
       const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
       const current = norm(document.querySelector(".job-selecter-wrap .ui-dropmenu-label")?.textContent);
-      return !!current && current === label;
-    })`,
+      return !!current && current === ${JSON.stringify(expectedLabel)};
+    })()`,
     { timeout: 10_000 },
-    expectedLabel,
   );
   await ensureRecommendFrameReady(frame);
 }

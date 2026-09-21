@@ -103,9 +103,17 @@ await frame.waitForFunction(`((x) => x === "NEVER")`, { timeout: 3000 }, 'NO'); 
 await frame.evaluate(`(() => ({ got: ${JSON.stringify(value)} }))()`);
 ```
 
-`normal-search.ts` 的三处已按此修正（关键词回填校验、岗位切换校验、城市选项匹配——城市那处
-是功能性坏掉：`picked` 恒为 `{}`，每次都报「查无此项」）。
+**全仓库已清干净（2026-09-21）**，新增代码别再写回去。当时修掉的八处，以及它们坏成什么样：
 
-**以下位置仍是旧写法，还没修**（都在本次改动范围外，动它们前要在真实页面上重新验收，因为把空转的
-等待改成真等待可能暴露出新的超时）：`common/boss_sidebar_nav.ts:46`、`toolset/action.ts:392`、
-`toolset/deep-search.ts:1271` 与 `:1283`、`toolset/recommend.ts:123` 与 `:135`。
+| 位置 | 原来的症状 |
+|---|---|
+| `normal-search.ts` 城市选项匹配 | 功能性坏掉：`picked` 恒为 `{}`，每次都报「城市查无此项」，只有城市本来就是目标值、走早退分支时才像是好的 |
+| `normal-search.ts` 关键词回填校验 / 岗位切换校验 | 判据恒真，等待空转 |
+| `boss_sidebar_nav.ts` 菜单点击 + 两处 path 等待 | **整个函数等于没执行**：`clicked` 拿到函数对象（真值）所以「未找到菜单」永不报、点击其实没发生，随后的 path 等待又恒真直接 return，连 `goto` 兜底都跑不到 |
+| `action.ts` 备注回填校验 | 「备注输入未生效」这句校验永远不触发 |
+| `recommend.ts` 岗位联想 / 岗位已选 两处等待 | 判据恒真，切岗位后不等渲染就往下走 |
+| `deep-search.ts` 同上两处 | 同上（该页已被平台下线，实际跑不到） |
+
+验收方式：`boss recommend <岗位>`（切岗位成功）、把页面挪到 `/web/chat/index` 后跑 `boss jd`
+（能自己导航回 `/web/chat/job/list`）、备注校验在临时空白页上用同形状表达式验证真假值
+（不拿真实候选人试写备注）。

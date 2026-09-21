@@ -6,15 +6,20 @@ const SIDEBAR_NAV_WAIT_MS = 15_000;
 // 不再触发路由导航，只有真实指针事件才跳转。故点击后先短等，超时则回退到 page.goto 直达。
 const SIDEBAR_CLICK_NAV_WAIT_MS = 5_000;
 
-const buildPathReachedPredicate = (): string =>
-  `((path) => {
+/**
+ * ⚠️ 目标 path 必须**内联**进脚本，不能走 `waitForFunction(fn, opts, arg)` 的入参：
+ * puppeteer 对字符串形式的 pageFunction 是当表达式求值的，入参会被静默丢弃，
+ * 求值结果是个函数对象 —— 恒为真，等待直接变空转。详见 AGENTS.md。
+ */
+const buildPathReachedPredicate = (path: string): string =>
+  `(() => {
       try {
         const p = window.location.pathname.replace(/\\/+$/, "") || "/";
-        return p === path;
+        return p === ${JSON.stringify(path)};
       } catch {
         return false;
       }
-    })`;
+    })()`;
 
 /**
  * 点击 Boss 左侧 `.menu-list` 中的菜单项，并等待导航到给定 pathname（如 `/web/chat/index`）。
@@ -25,8 +30,12 @@ export async function clickBossSidebarMenuToPath(
   menuLabel: string,
   targetPath: string,
 ): Promise<void> {
+  // 菜单文案和目标 path 同样要内联，理由见 buildPathReachedPredicate。
+  // 走入参的话这里拿到的是函数对象（真值），「未找到菜单」永远不会报，而点击根本没发生。
   const clicked = (await page.evaluate(
-    `(({ label, path }) => {
+    `(() => {
+      const label = ${JSON.stringify(menuLabel)};
+      const path = ${JSON.stringify(targetPath)};
       const norm = (v) => (v ?? "").replace(/\\s+/g, "");
       const links = Array.from(document.querySelectorAll(".menu-list a"));
       const target = links.find((a) => {
@@ -43,8 +52,7 @@ export async function clickBossSidebarMenuToPath(
       target.scrollIntoView({ block: "center", inline: "nearest" });
       target.click();
       return true;
-    })`,
-    { label: menuLabel, path: targetPath },
+    })()`,
   )) as boolean;
 
   if (!clicked) {
@@ -53,10 +61,10 @@ export async function clickBossSidebarMenuToPath(
 
   await sleepRandom(SIDEBAR_NAV_AFTER_CLICK_MS.min, SIDEBAR_NAV_AFTER_CLICK_MS.max);
 
-  const pathReached = buildPathReachedPredicate();
+  const pathReached = buildPathReachedPredicate(targetPath);
 
   try {
-    await page.waitForFunction(pathReached, { timeout: SIDEBAR_CLICK_NAV_WAIT_MS }, targetPath);
+    await page.waitForFunction(pathReached, { timeout: SIDEBAR_CLICK_NAV_WAIT_MS });
     return;
   } catch {
     // 合成点击未导航（Boss v10718+），回退到直接 goto 目标 URL。
@@ -64,5 +72,5 @@ export async function clickBossSidebarMenuToPath(
 
   const targetUrl = new URL(targetPath, page.url()).toString();
   await page.goto(targetUrl, { waitUntil: 'load', timeout: 60_000 });
-  await page.waitForFunction(pathReached, { timeout: SIDEBAR_NAV_WAIT_MS }, targetPath);
+  await page.waitForFunction(pathReached, { timeout: SIDEBAR_NAV_WAIT_MS });
 }

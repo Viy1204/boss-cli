@@ -1255,8 +1255,10 @@ async function waitForAiFormJobDropdownReady(page: Page): Promise<void> {
 }
 
 async function waitForAiFormJobSearchResults(page: Page, keyword: string): Promise<void> {
+  // 关键词内联，不能走入参：字符串 pageFunction 收不到，判据恒为真、等待变空转。详见 AGENTS.md。
   await page.waitForFunction(
-    `((kw) => {
+    `(() => {
+      const kw = ${JSON.stringify(keyword)};
       const norm = (v) => (v ?? "").replace(/\\s+/g, "").trim().toLowerCase();
       const rows = Array.from(
         document.querySelectorAll(
@@ -1268,21 +1270,19 @@ async function waitForAiFormJobSearchResults(page: Page, keyword: string): Promi
         const label = norm(el.querySelector(".job-option-text, .label")?.textContent || el.textContent || "");
         return label.includes(norm(kw));
       });
-    })`,
+    })()`,
     { timeout: 10_000 },
-    keyword,
   );
 }
 
 async function waitForAiFormJobSelected(page: Page, expectedLabel: string): Promise<void> {
   await page.waitForFunction(
-    `((label) => {
+    `(() => {
       const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
       const selected = norm(document.querySelector(".job-dropmenu-select .job-main-text")?.textContent);
-      return !!selected && selected === label;
-    })`,
+      return !!selected && selected === ${JSON.stringify(expectedLabel)};
+    })()`,
     { timeout: 10_000 },
-    expectedLabel,
   );
   await ensureInDeepSearchPage(page);
 }

@@ -327,11 +327,16 @@ async function updateCandidateRemark(page, remarkText) {
     await sleepRandom(120, 260);
     await page.type(textareaSel, nextRemark, { delay: 24 });
     await sleepRandom(200, 360);
-    const filledOk = (await page.evaluate(`((selector, expected) => {
-      const el = document.querySelector(selector);
+    /**
+     * ⚠️ 选择器和期望值必须**内联**：字符串形式的 pageFunction 收不到入参，
+     * 求值结果是个函数对象（真值），下面那句「备注输入未生效」的校验就永远不会触发。
+     * 详见 AGENTS.md。
+     */
+    const filledOk = (await page.evaluate(`(() => {
+      const el = document.querySelector(${JSON.stringify(textareaSel)});
       if (!(el instanceof HTMLTextAreaElement)) return false;
-      return (el.value ?? "").trim() === expected;
-    })`, textareaSel, nextRemark));
+      return (el.value ?? "").trim() === ${JSON.stringify(nextRemark)};
+    })()`));
     if (!filledOk) {
         throw new Error('备注输入未生效，请重试。');
     }
