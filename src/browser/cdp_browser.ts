@@ -281,7 +281,7 @@ export function shouldBreakawayFromJob(): boolean {
  * 调用方的 Job Object 里，但仍属于当前交互登录会话（有头窗口照常可见）。
  * 命令行经环境变量交给 PowerShell，省掉再套一层引号转义。
  *
- * 起不来直接抛错，不静默退回 `spawn`：退回等于把 #43 原样带回来且无人察觉。
+ * 抛错由调用方接住并**显著告警后退回 `spawn`**，理由见 `warnBreakawayUnavailable`。
  */
 async function spawnViaWmi(commandLine: string): Promise<number> {
   let stdout: string;
@@ -314,6 +314,49 @@ async function spawnViaWmi(commandLine: string): Promise<number> {
     throw new Error(`WMI 已受理启动请求但未返回有效 PID（stdout: ${JSON.stringify(stdout)}）。`);
   }
   return pid;
+}
+
+/**
+ * WMI 拉不起来时的显著告警。打完这条就退回普通 `spawn`。
+ *
+ * **这是 AGENTS.md「禁止回退逻辑 / 失败直接暴露」的一处有意例外，别顺手删掉。**
+ * 那条规则禁的是**静默**兜底；这里告警是刷屏级的，用户不可能看不见，不属于「掩盖根因」。
+ *
+ * 为什么必须退回（recruiting-copilot#43 验收反馈，2026-09-21）：报告人那台 Windows 上
+ * `Invoke-CimMethod Win32_Process Create` 返回 `ReturnValue=2`（拒绝访问）——读操作正常，
+ * 单单「创建进程」被策略拒了。硬失败的结果是 `search` / `recommend` / `list` 全部不可用，
+ * 他只能设 `BOSS_SPAWN_BREAKAWAY=false` 兜住，而那恰好把 #43 原样装回去，还绕过了这条告警。
+ * 权衡很清楚：**退回后是「浏览器可能被连带杀掉」（可恢复，重扫码），硬失败是「CLI 完全不能用」**
+ * （不可恢复，除非用户自己找到那个环境变量）。前者更轻，且带告警时用户知道自己在什么状态。
+ *
+ * 退回**只覆盖「WMI 创建进程失败」这一步**。进程已创建但调试端口没起来，仍然硬失败——
+ * 那时候端口上可能已经有一只正在启动的 Chrome，再 spawn 一只会撞车。
+ */
+function warnBreakawayUnavailable(cause: unknown): void {
+  const reason = cause instanceof Error ? cause.message : String(cause);
+  console.error(
+    [
+      '',
+      '='.repeat(72),
+      '⚠️  浏览器无法脱离调用方的 Job Object —— 已退回普通启动方式',
+      '='.repeat(72),
+      `原因：${reason}`,
+      '',
+      '影响：从 AI Agent 宿主调用时，本条命令结束后 Chrome 可能被连带杀掉，',
+      '      profile 会留下 exit_type: Crashed，会话级登录态丢失、需要重新扫码。',
+      '      高频重登本身就是平台风控信号（见 recruiting-copilot#43）。',
+      '',
+      '常见成因：本机策略拒绝了 WMI 创建进程（Invoke-CimMethod Win32_Process Create',
+      '          返回 ReturnValue=2），或 PowerShell 被禁用。自查：',
+      `          powershell -NoProfile -Command "(Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='cmd.exe /c exit'}).ReturnValue"`,
+      '          返回 0 表示可用；2 表示被拒。',
+      '',
+      '缓解：把 login / 业务动作 / shutdown 放进同一次调用，收尾用 boss shutdown 干净退出。',
+      '      确认本机就是起不来、不想再看这条告警：设 BOSS_SPAWN_BREAKAWAY=false。',
+      '='.repeat(72),
+      '',
+    ].join('\n'),
+  );
 }
 
 /** 进程是否还活着（signal 0 只做存在性探测，不投递信号）。 */
@@ -525,9 +568,19 @@ export async function connectBrowser(options: ConnectBrowserOptions = {}): Promi
    * Windows 默认经 WMI 启动，让浏览器脱离调用方的 Job Object（见 `shouldBreakawayFromJob`）。
    * 这条路径没有子进程句柄，因此既不会被 Job 连带杀掉，也不会有 stdio 管道拖住 Node 退出。
    */
+  let breakawayPid: number | null = null;
   if (shouldBreakawayFromJob()) {
-    const pid = await spawnViaWmi(toWindowsCommandLine(executablePath, chromeArgs));
-    const wsUrl = await waitForRemoteDebuggingWsEndpoint(pid, userDataDir, LAUNCH_READY_MS);
+    try {
+      breakawayPid = await spawnViaWmi(toWindowsCommandLine(executablePath, chromeArgs));
+    } catch (e) {
+      // 只有「创建进程」这一步失败才退回 spawn；告警很吵，是故意的（见函数注释）。
+      warnBreakawayUnavailable(e);
+    }
+  }
+
+  if (breakawayPid !== null) {
+    // 注意这句在 try 外：进程已创建但调试端口没起来是真故障，不能再 spawn 一只去撞端口。
+    const wsUrl = await waitForRemoteDebuggingWsEndpoint(breakawayPid, userDataDir, LAUNCH_READY_MS);
     return await puppeteer.connect({
       browserWSEndpoint: wsUrl,
       defaultViewport: launchViewportFromEnv(),
