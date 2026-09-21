@@ -11,6 +11,8 @@ import test from 'node:test';
 
 import {
   ageTokenToLabel,
+  degreeSliderLabel,
+  degreeTokenToIndex,
   defaultSearchCityFromEnv,
   expSliderLabel,
   expTokenToIndex,
@@ -113,6 +115,19 @@ test('经验档位反向取文案，和页面上 tooltip 实测到的一致', ()
 test('经验档位超范围直接报错：拖错一格＝搜错人群且用户看不出来', () => {
   assert.throws(() => expTokenToIndex('11'), /应届/);
   assert.throws(() => expTokenToIndex('abc'), /应届/);
+});
+
+test('学历档位按页面实测的七档，第2档是「中专/中技」不是「中专」', () => {
+  assert.equal(degreeTokenToIndex('初中及以下'), 1);
+  assert.equal(degreeTokenToIndex('中专/中技'), 2);
+  assert.equal(degreeTokenToIndex('大专'), 4);
+  assert.equal(degreeTokenToIndex('博士'), 7);
+  assert.equal(degreeSliderLabel(5), '本科');
+});
+
+test('学历区间传页面上没有的写法直接报错，不做近似匹配', () => {
+  assert.throws(() => degreeTokenToIndex('中专'), /初中及以下/);
+  assert.throws(() => degreeTokenToIndex('本科及以上'), /初中及以下/);
 });
 
 test('年龄区间转成下拉里的文案', () => {

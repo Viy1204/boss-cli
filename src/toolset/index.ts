@@ -16,6 +16,8 @@ export {
   normalizeFilterLabel,
   parseRangeArg,
   expTokenToIndex,
+  degreeTokenToIndex,
+  degreeSliderLabel,
   expSliderLabel,
   ageTokenToLabel,
   defaultSearchCityFromEnv,

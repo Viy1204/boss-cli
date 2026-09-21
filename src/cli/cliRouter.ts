@@ -174,7 +174,8 @@ function printHelp(): void {
       抓取指定职位详情并缓存到项目目录同名 .md
   boss recommend [岗位关键字]
       进入推荐页并读取推荐列表；带岗位关键字时先在岗位下拉中模糊匹配并切换
-  boss search [关键词] [--job <岗位>] [--city <城市>] [--degree <学历>] [--school <院校要求>]
+  boss search [关键词] [--job <岗位>] [--city <城市>] [--school <院校要求>]
+              [--degree <学历>|--degree-range <下限-上限>]
               [--exp <经验要求>|--exp-range <下限-上限>]
               [--age <年龄要求>|--age-range <下限-上限>]
               [--status <求职状态>] [--job-hop <跳槽频率>] [--major <专业>]
@@ -184,6 +185,8 @@ function printHelp(): void {
       --city    搜索城市，如 --city 深圳；不传则读环境变量 BOSS_SEARCH_CITY，仍为空则不限城市
                 只接受完全匹配的联想项，匹配不上会报错并列出候选，不会替你猜
       --degree  学历要求：不限 / 本科及以上 / 硕士及以上 / 博士
+      --degree-range  学历要求的自定义区间（拖滑块），如 --degree-range 大专-本科；
+                两端取值：初中及以下 / 中专/中技 / 高中 / 大专 / 本科 / 硕士 / 博士；与 --degree 互斥
       --school  院校要求，可多选用逗号分隔：统招本科 / 双一流院校 / 211院校 / 985院校 /
                 留学生 / QS 100 / QS 500 / 只看第一学历（页面提示＝第一学历为全日制本科）
       --exp     经验要求，单选：在校/应届 / 25年毕业 / 26年毕业 / 26年后毕业 / 1-3年 /
@@ -569,7 +572,7 @@ export async function executeCommand(argv: string[]): Promise<string> {
   if (cmd === 'search') {
     const { rest, opts, flags } = parseOpts(tail);
     const usage =
-      '❌ 用法: search [关键词] [--job <岗位关键字>] [--city <城市>] [--degree <学历>] [--school <院校要求,逗号分隔>] [--exp <经验要求>|--exp-range <下限-上限>] [--age <年龄要求>|--age-range <下限-上限>] [--status <求职状态,逗号分隔>] [--job-hop <跳槽频率>] [--major <专业,逗号分隔>]';
+      '❌ 用法: search [关键词] [--job <岗位关键字>] [--city <城市>] [--degree <学历>|--degree-range <下限-上限>] [--school <院校要求,逗号分隔>] [--exp <经验要求>|--exp-range <下限-上限>] [--age <年龄要求>|--age-range <下限-上限>] [--status <求职状态,逗号分隔>] [--job-hop <跳槽频率>] [--major <专业,逗号分隔>]';
     if (flags.size > 0) {
       die(usage);
     }
@@ -577,6 +580,7 @@ export async function executeCommand(argv: string[]): Promise<string> {
       'job',
       'city',
       'degree',
+      'degree-range',
       'school',
       'exp',
       'exp-range',
@@ -596,6 +600,7 @@ export async function executeCommand(argv: string[]): Promise<string> {
       jobKeyword: opts.job?.trim() || undefined,
       city: opts.city?.trim() || undefined,
       degree: opts.degree?.trim() || undefined,
+      degreeRange: opts['degree-range']?.trim() || undefined,
       schools: parseFilterLabels(opts.school),
       exp: opts.exp?.trim() || undefined,
       expRange: opts['exp-range']?.trim() || undefined,

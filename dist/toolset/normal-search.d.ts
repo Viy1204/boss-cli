@@ -30,6 +30,15 @@ export declare function parseRangeArg(raw: string): {
 export declare const EXP_SLIDER_STOPS = 12;
 export declare function expSliderLabel(index: number): string;
 /**
+ * 学历滑块共 7 档，档位文案同样是实测 tooltip 读出来的，**不是照学历常识排的**
+ * （第 2 档是「中专/中技」不是「中专」，写错就永远匹配不上）。
+ */
+export declare const DEGREE_SLIDER_LABELS: readonly ["初中及以下", "中专/中技", "高中", "大专", "本科", "硕士", "博士"];
+export declare const DEGREE_SLIDER_STOPS: 7;
+export declare function degreeSliderLabel(index: number): string;
+/** 把 `--degree-range` 的一段转成滑块档位；只认页面上那七个文案。 */
+export declare function degreeTokenToIndex(token: string): number;
+/**
  * 把 `--exp-range` 的一段转成滑块档位。收 `应届`、`0`~`10`、`10+`。
  * 不认的值直接报错——猜错档位＝搜错人群，而且用户不会发现。
  */
@@ -82,6 +91,12 @@ export declare function selectNormalSearchAge(frame: Frame, age: string): Promis
  * 一拖动，预设那排的「不限」就会自动取消，两者是互斥的。
  */
 export declare function selectNormalSearchExpRange(page: Page, frame: Frame, minToken: string, maxToken: string): Promise<string>;
+/**
+ * 学历要求（自定义区间）：拖 `.degree-select-custom-slider`，七档
+ * 初中及以下 → 博士。预设那排只有「本科及以上 / 硕士及以上 / 博士」，
+ * 想要「大专-本科」这种带上限的区间只能走这里。
+ */
+export declare function selectNormalSearchDegreeRange(page: Page, frame: Frame, minToken: string, maxToken: string): Promise<string>;
 /**
  * 年龄要求（自定义区间）：点「自定义」展开 `.age-custom`，里面是两个下拉（16岁…46岁+）。
  * 和经验那个滑块不一样，这里是规规矩矩的下拉，选完读回 `span.ipt` 校验。
@@ -157,6 +172,8 @@ export type NormalSearchOptions = {
     /** 不传则读 `BOSS_SEARCH_CITY`；仍为空就完全不碰城市控件。 */
     city?: string;
     degree?: string;
+    /** 学历要求的自定义区间，如 `大专-本科`；与 `degree` 互斥 */
+    degreeRange?: string;
     schools?: string[];
     /** 经验要求，单选：在校/应届 / 25年毕业 / 1-3年 / 3-5年 / 5-10年 等 */
     exp?: string;

@@ -110,6 +110,36 @@ export function expSliderLabel(index: number): string {
 }
 
 /**
+ * 学历滑块共 7 档，档位文案同样是实测 tooltip 读出来的，**不是照学历常识排的**
+ * （第 2 档是「中专/中技」不是「中专」，写错就永远匹配不上）。
+ */
+export const DEGREE_SLIDER_LABELS = [
+  '初中及以下',
+  '中专/中技',
+  '高中',
+  '大专',
+  '本科',
+  '硕士',
+  '博士',
+] as const;
+
+export const DEGREE_SLIDER_STOPS = DEGREE_SLIDER_LABELS.length;
+
+export function degreeSliderLabel(index: number): string {
+  return DEGREE_SLIDER_LABELS[index - 1] ?? `第${index}档`;
+}
+
+/** 把 `--degree-range` 的一段转成滑块档位；只认页面上那七个文案。 */
+export function degreeTokenToIndex(token: string): number {
+  const t = token.trim();
+  const i = DEGREE_SLIDER_LABELS.indexOf(t as (typeof DEGREE_SLIDER_LABELS)[number]);
+  if (i < 0) {
+    throw new Error(`学历区间只认：${DEGREE_SLIDER_LABELS.join('｜')}，收到「${token}」。`);
+  }
+  return i + 1;
+}
+
+/**
  * 把 `--exp-range` 的一段转成滑块档位。收 `应届`、`0`~`10`、`10+`。
  * 不认的值直接报错——猜错档位＝搜错人群，而且用户不会发现。
  */
@@ -609,7 +639,7 @@ async function readSelectedExp(frame: Frame): Promise<string> {
   if (preset) {
     return preset;
   }
-  const range = await readExpSliderRange(frame);
+  const range = await readSliderRange(frame, EXP_SLIDER);
   return range ? `${expSliderLabel(range.min)}-${expSliderLabel(range.max)}（自定义）` : '';
 }
 
@@ -674,16 +704,42 @@ export async function selectNormalSearchAge(frame: Frame, age: string): Promise<
   return picked.label ?? target;
 }
 
-/** 读经验滑块的当前档位；`null` 表示还是默认的整段（＝没用自定义）。 */
-async function readExpSliderRange(frame: Frame): Promise<{ min: number; max: number } | null> {
-  const raw = (await frame.evaluate(
-    `(() => document.querySelector(".experience-select-custom-slider .ui-slider input[type=hidden]")?.value ?? "")()`,
-  )) as string;
-  const [min, max] = raw.split(',').map((s) => Number(s));
+/** 经验、学历各有一个双手柄滑块，结构完全一样，只有容器和档位数不同。 */
+type SliderSpec = {
+  /** 容器选择器 */
+  wrap: string;
+  /** 档位总数 */
+  stops: number;
+  /** 档位 → 页面文案 */
+  label: (index: number) => string;
+  /** 报错时怎么称呼它 */
+  name: string;
+};
+
+const EXP_SLIDER: SliderSpec = {
+  wrap: '.experience-select-custom-slider',
+  stops: EXP_SLIDER_STOPS,
+  label: expSliderLabel,
+  name: '经验',
+};
+
+const DEGREE_SLIDER: SliderSpec = {
+  wrap: '.degree-select-custom-slider',
+  stops: DEGREE_SLIDER_STOPS,
+  label: degreeSliderLabel,
+  name: '学历',
+};
+
+/** 读滑块的当前档位；`null` 表示还是默认的整段（＝没用自定义）。 */
+async function readSliderRange(
+  frame: Frame,
+  spec: SliderSpec,
+): Promise<{ min: number; max: number } | null> {
+  const { min, max } = await readSliderIndices(frame, spec);
   if (!Number.isInteger(min) || !Number.isInteger(max)) {
     return null;
   }
-  if (min === 1 && max === EXP_SLIDER_STOPS) {
+  if (min === 1 && max === spec.stops) {
     return null;
   }
   return { min, max };
@@ -699,76 +755,101 @@ async function readExpSliderRange(frame: Frame): Promise<{ min: number; max: num
  *
  * 也没有键盘可用——手柄拿不到焦点，方向键实测无效。
  */
-async function dragExpSlider(
+async function dragSliderRange(
   page: Page,
   frame: Frame,
+  spec: SliderSpec,
   minIndex: number,
   maxIndex: number,
 ): Promise<void> {
-  const barSel = '.experience-select-custom-slider .ui-slider-wrap';
-  const bar = await frame.$(barSel);
+  const bar = await frame.$(`${spec.wrap} .ui-slider-wrap`);
   const barBox = await bar?.boundingBox();
   if (!barBox) {
-    throw new Error('未找到经验自定义滑块（.experience-select-custom-slider）。');
+    throw new Error(`未找到${spec.name}自定义滑块（${spec.wrap}）。`);
   }
-  const stepPx = barBox.width / (EXP_SLIDER_STOPS - 1);
+  const stepPx = barBox.width / (spec.stops - 1);
 
-  // 先拖右手柄再拖左手柄：清空后默认是 [1, 12]，右手柄往左收不会被左手柄挡住。
-  await dragOneHandle(page, frame, barBox.x, stepPx, 1, maxIndex);
-  await dragOneHandle(page, frame, barBox.x, stepPx, 0, minIndex);
+  // 先拖右手柄再拖左手柄：清空后默认是整段，右手柄往左收不会被左手柄挡住。
+  await dragOneHandle(page, frame, spec, barBox.x, stepPx, 1, maxIndex);
+  await dragOneHandle(page, frame, spec, barBox.x, stepPx, 0, minIndex);
 }
 
 async function dragOneHandle(
   page: Page,
   frame: Frame,
+  spec: SliderSpec,
   barLeft: number,
   stepPx: number,
   handleIndex: 0 | 1,
   targetIndex: number,
 ): Promise<void> {
   const targetX = barLeft + (targetIndex - 1) * stepPx;
+  /**
+   * 拖完按 hidden 的真实档位校验，没到位就把「差了几格」累积成像素偏置，
+   * 拖到**绝对目标位置 + 偏置**再来一次。实测三轮内收敛。
+   *
+   * 不按「从当前手柄位置相对移动几格」算：那样会在差一格的位置反复横跳，六次全废。
+   * 也不要试图给某个手柄写死一个固定偏移——组件的响应跟手柄的起始位置有关
+   * （同一个指针位置，从第 7 档拖过来落在第 4 档，从第 6 档拖过来落在第 5 档），
+   * 写死偏移能修好学历滑块就会弄坏经验滑块。只有"拖完读真值再纠"这条路是通的。
+   */
+  let biasPx = 0;
   for (let attempt = 0; attempt < SLIDER_MAX_ATTEMPTS; attempt++) {
-    const handles = await frame.$$('.experience-select-custom-slider .ui-slider-button-wrap');
+    const handles = await frame.$$(`${spec.wrap} .ui-slider-button-wrap`);
     const box = await handles[handleIndex]?.boundingBox();
     if (!box) {
-      throw new Error('未找到经验滑块的拖动手柄（.ui-slider-button-wrap）。');
+      throw new Error(`未找到${spec.name}滑块的拖动手柄（.ui-slider-button-wrap）。`);
     }
     const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-    const landed = await readSliderIndices(frame);
+    const landed = await readSliderIndices(frame, spec);
     const current = handleIndex === 0 ? landed.min : landed.max;
     if (current === targetIndex) {
       return;
     }
+    if (attempt > 0) {
+      biasPx += (targetIndex - current) * stepPx;
+    }
     /**
-     * 每一轮都按**目标的绝对位置**拖，不做「还差几格」的相对纠偏——
-     * 相对纠偏实测会卡死在差一格的位置反复横跳（连拖 6 次都停在「2年」）。
-     *
+     * 钳住：**不许拖到对面手柄的位置上去**。
+     * 两个手柄一旦重叠，`$$` 出来的第 0 / 第 1 个就分不清谁是谁了，后面每一轮都在抓错的那个，
+     * 纠偏彻底失效——本机实测就这么把 [1,7] 拖成了 [7,7] 然后六轮全废。
+     */
+    const otherIndex = handleIndex === 0 ? landed.max : landed.min;
+    const otherX = barLeft + (otherIndex - 1) * stepPx;
+    const to =
+      handleIndex === 0
+        ? Math.min(targetX + biasPx, otherX - stepPx / 2)
+        : Math.max(targetX + biasPx, otherX + stepPx / 2);
+    /**
      * 松手前那一下 0.5px 的微动 + 停顿是必须的：最后一个 mousemove 会被帧合并吃掉，
-     * 组件按上一帧的位置吸附。加上之后实测 5 次里 4 次一把到位，剩下的交给重试。
+     * 组件按上一帧的位置吸附。加上之后实测 5 次里 4 次一把到位。
      */
     await page.mouse.move(from.x, from.y);
     await page.mouse.down();
     await sleepRandom(120, 200);
-    await page.mouse.move(targetX, from.y, { steps: 20 });
+    await page.mouse.move(to, from.y, { steps: 20 });
     await sleepRandom(120, 200);
-    await page.mouse.move(targetX + 0.5, from.y);
+    await page.mouse.move(to + 0.5, from.y);
     await sleepRandom(300, 420);
     await page.mouse.up();
     await sleepRandom(FILTER_SETTLE_MS.min, FILTER_SETTLE_MS.max);
   }
 
-  const final = await readSliderIndices(frame);
+  const final = await readSliderIndices(frame, spec);
   const got = handleIndex === 0 ? final.min : final.max;
   if (got !== targetIndex) {
     throw new Error(
-      `经验滑块拖了 ${SLIDER_MAX_ATTEMPTS} 次也没停在「${expSliderLabel(targetIndex)}」，当前停在「${expSliderLabel(got)}」。`,
+      `${spec.name}滑块拖了 ${SLIDER_MAX_ATTEMPTS} 次也没停在「${spec.label(targetIndex)}」，当前停在「${spec.label(got)}」。`,
     );
   }
 }
 
-async function readSliderIndices(frame: Frame): Promise<{ min: number; max: number }> {
+async function readSliderIndices(
+  frame: Frame,
+  spec: SliderSpec,
+): Promise<{ min: number; max: number }> {
   const raw = (await frame.evaluate(
-    `(() => document.querySelector(".experience-select-custom-slider .ui-slider input[type=hidden]")?.value ?? "")()`,
+    `(() => document.querySelector("${spec.wrap} .ui-slider input[type=hidden]")?.value ?? "")()`,
   )) as string;
   const [min, max] = raw.split(',').map((s) => Number(s));
   return { min, max };
@@ -784,16 +865,44 @@ export async function selectNormalSearchExpRange(
   minToken: string,
   maxToken: string,
 ): Promise<string> {
-  const minIndex = expTokenToIndex(minToken);
-  const maxIndex = expTokenToIndex(maxToken);
+  return setSliderRange(page, frame, EXP_SLIDER, expTokenToIndex(minToken), expTokenToIndex(maxToken));
+}
+
+/**
+ * 学历要求（自定义区间）：拖 `.degree-select-custom-slider`，七档
+ * 初中及以下 → 博士。预设那排只有「本科及以上 / 硕士及以上 / 博士」，
+ * 想要「大专-本科」这种带上限的区间只能走这里。
+ */
+export async function selectNormalSearchDegreeRange(
+  page: Page,
+  frame: Frame,
+  minToken: string,
+  maxToken: string,
+): Promise<string> {
+  return setSliderRange(
+    page,
+    frame,
+    DEGREE_SLIDER,
+    degreeTokenToIndex(minToken),
+    degreeTokenToIndex(maxToken),
+  );
+}
+
+async function setSliderRange(
+  page: Page,
+  frame: Frame,
+  spec: SliderSpec,
+  minIndex: number,
+  maxIndex: number,
+): Promise<string> {
   if (minIndex > maxIndex) {
     throw new Error(
-      `经验区间的下限「${expSliderLabel(minIndex)}」比上限「${expSliderLabel(maxIndex)}」还大。`,
+      `${spec.name}区间的下限「${spec.label(minIndex)}」比上限「${spec.label(maxIndex)}」还大。`,
     );
   }
-  await dragExpSlider(page, frame, minIndex, maxIndex);
+  await dragSliderRange(page, frame, spec, minIndex, maxIndex);
   await sleepRandom(FILTER_SETTLE_MS.min, FILTER_SETTLE_MS.max);
-  return `${expSliderLabel(minIndex)}-${expSliderLabel(maxIndex)}`;
+  return `${spec.label(minIndex)}-${spec.label(maxIndex)}`;
 }
 
 /**
@@ -941,11 +1050,14 @@ export async function selectNormalSearchSchools(frame: Frame, labels: string[]):
  * 打入参的话「上次设过、这次没传」的条件会照样生效却不显示，用户会以为没筛。
  */
 async function readSelectedDegree(frame: Frame): Promise<string> {
-  return (await frame.evaluate(`(() => {
-    const el = document.querySelector(".degree-ui .degree-item.active");
-    const t = (el?.textContent ?? "").replace(/\\s+/g, " ").trim();
-    return t === "不限" ? "" : t;
-  })()`)) as string;
+  const preset = await readActiveFilterItem(frame, '.degree-ui', '.degree-item');
+  if (preset) {
+    return preset;
+  }
+  const range = await readSliderRange(frame, DEGREE_SLIDER);
+  return range
+    ? `${degreeSliderLabel(range.min)}-${degreeSliderLabel(range.max)}（自定义）`
+    : '';
 }
 
 /**
@@ -1059,8 +1171,12 @@ export async function resetNormalSearchFilters(frame: Frame): Promise<boolean> {
       };
       const schoolOk = Array.from(document.querySelectorAll(".school-ui input.checkbox-input")).every((el) => !el.checked);
       // 自定义区间也要回到默认，否则下一轮会在上一轮的滑块位置上继续拖。
-      const slider = document.querySelector(".experience-select-custom-slider .ui-slider input[type=hidden]");
-      const sliderOk = !slider || slider.value === "1,${EXP_SLIDER_STOPS}";
+      const sliderDefault = (sel, stops) => {
+        const el = document.querySelector(sel + " .ui-slider input[type=hidden]");
+        return !el || el.value === "1," + stops;
+      };
+      const sliderOk = sliderDefault(".experience-select-custom-slider", ${EXP_SLIDER_STOPS})
+        && sliderDefault(".degree-select-custom-slider", ${DEGREE_SLIDER_STOPS});
       const ageBox = document.querySelector(".age-custom");
       const ageOk = !ageBox || getComputedStyle(ageBox).display === "none";
       return isDefault(".degree-ui .degree-item.active")
@@ -1640,6 +1756,8 @@ export type NormalSearchOptions = {
   /** 不传则读 `BOSS_SEARCH_CITY`；仍为空就完全不碰城市控件。 */
   city?: string;
   degree?: string;
+  /** 学历要求的自定义区间，如 `大专-本科`；与 `degree` 互斥 */
+  degreeRange?: string;
   schools?: string[];
   /** 经验要求，单选：在校/应届 / 25年毕业 / 1-3年 / 3-5年 / 5-10年 等 */
   exp?: string;
@@ -1662,11 +1780,15 @@ export async function runNormalSearch(opts: NormalSearchOptions = {}): Promise<s
   const jobKw = (opts.jobKeyword ?? '').trim();
   const city = (opts.city ?? defaultSearchCityFromEnv()).trim();
   const degree = (opts.degree ?? '').trim();
+  const degreeRange = (opts.degreeRange ?? '').trim();
   const schools = (opts.schools ?? []).map((s) => s.trim()).filter(Boolean);
   const exp = (opts.exp ?? '').trim();
   const expRange = (opts.expRange ?? '').trim();
   const age = (opts.age ?? '').trim();
   const ageRange = (opts.ageRange ?? '').trim();
+  if (degree && degreeRange) {
+    throw new Error('--degree 和 --degree-range 只能给一个：预设档位和自定义区间在页面上是互斥的。');
+  }
   if (exp && expRange) {
     throw new Error('--exp 和 --exp-range 只能给一个：预设档位和自定义区间在页面上是互斥的。');
   }
@@ -1708,6 +1830,10 @@ export async function runNormalSearch(opts: NormalSearchOptions = {}): Promise<s
       }
       if (degree) {
         await selectNormalSearchDegree(frame, degree);
+      }
+      if (degreeRange) {
+        const { min, max } = parseRangeArg(degreeRange);
+        await selectNormalSearchDegreeRange(page, frame, min, max);
       }
       if (schools.length > 0) {
         await selectNormalSearchSchools(frame, schools);
