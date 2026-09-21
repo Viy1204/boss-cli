@@ -97,7 +97,7 @@ npm install -g https://github.com/Viy1204/boss-cli/archive/refs/heads/main.tar.g
 | `boss positions` | 读取职位列表 |
 | `boss jd <名称>` | 抓取职位 JD 缓存到本地 |
 
-完整用法：`boss help`
+完整用法：`boss help`；版本间的行为变更见 [CHANGELOG.md](./CHANGELOG.md)
 
 ---
 
