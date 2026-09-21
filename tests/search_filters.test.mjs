@@ -3,7 +3,8 @@
  *
  * 只测纯函数——真正的选择动作要连浏览器，那部分靠人工在真实页面上验收
  * （本轮已验：不限职位 / --city 深圳 / --school 统招本科 / --degree 本科及以上 /
- * --status / --job-hop / --major，以及每次搜索前自动清空筛选、传错值时列出可选项的报错路径）。
+ * --exp 3-5年 / --age 25-30 / --status / --job-hop / --major，以及每次搜索前自动清空筛选
+ * （含只在浏览器里手动设过的残留）、传错值时列出可选项的报错路径）。
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';

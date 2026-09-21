@@ -44,6 +44,19 @@ export declare function selectNormalSearchCity(frame: Frame, city: string): Prom
 /** 学历要求：`.degree-ui` 里的单选项，当前选中项带 `.active`（已选中就不重复点）。 */
 export declare function selectNormalSearchDegree(frame: Frame, degree: string): Promise<string>;
 /**
+ * 经验要求：`.exp-list-ui` 里的单选项
+ * （在校/应届 / 25年毕业 / 26年毕业 / 26年后毕业 / 1-3年 / 3-5年 / 5-10年）。
+ *
+ * 旁边还有个「自定义」滑块（`.experience-select-custom-slider`）没做——拖滑块的交互
+ * 和点选项完全是两回事，等真有人需要「6-8年」这种区间再说。
+ */
+export declare function selectNormalSearchExp(frame: Frame, exp: string): Promise<string>;
+/**
+ * 年龄要求：`.age-list-ui` 里的单选项（20-25 / 25-30 / 30-35 / 35-40 / 40-50 / 50以上）。
+ * 「自定义」那对下拉（`.age-custom`，默认 `display:none`）同样没做。
+ */
+export declare function selectNormalSearchAge(frame: Frame, age: string): Promise<string>;
+/**
  * 院校要求：`.school-ui` 里的多选框（统招本科 / 双一流院校 / 211院校 / 985院校 /
  * 留学生 / QS 100 / QS 500），以及单独一个「只看第一学历」（提示语写明＝第一学历为全日制本科）。
  *
@@ -114,6 +127,10 @@ export type NormalSearchOptions = {
     city?: string;
     degree?: string;
     schools?: string[];
+    /** 经验要求，单选：在校/应届 / 25年毕业 / 1-3年 / 3-5年 / 5-10年 等 */
+    exp?: string;
+    /** 年龄要求，单选：20-25 / 25-30 / 30-35 / 35-40 / 40-50 / 50以上 */
+    age?: string;
     /** 求职状态，可多选：离职-随时到岗 / 在职-暂不考虑 / 在职-考虑机会 / 在职-月内到岗 */
     status?: string[];
     /** 跳槽频率，单选：5年少于3份 / 时间≥1年 */

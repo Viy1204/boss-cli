@@ -532,6 +532,65 @@ export async function selectNormalSearchDegree(frame: Frame, degree: string): Pr
   return picked.label ?? target;
 }
 
+async function readSelectedExp(frame: Frame): Promise<string> {
+  return readActiveFilterItem(frame, '.exp-list-ui', '.exp-item');
+}
+
+async function readSelectedAge(frame: Frame): Promise<string> {
+  return readActiveFilterItem(frame, '.age-list-ui', '.age-item');
+}
+
+/**
+ * 经验要求：`.exp-list-ui` 里的单选项
+ * （在校/应届 / 25年毕业 / 26年毕业 / 26年后毕业 / 1-3年 / 3-5年 / 5-10年）。
+ *
+ * 旁边还有个「自定义」滑块（`.experience-select-custom-slider`）没做——拖滑块的交互
+ * 和点选项完全是两回事，等真有人需要「6-8年」这种区间再说。
+ */
+export async function selectNormalSearchExp(frame: Frame, exp: string): Promise<string> {
+  const target = exp.trim();
+  if (!target) {
+    return '';
+  }
+  const picked = await clickFilterItem(frame, '.exp-list-ui', '.exp-item', target, {
+    skipIfActive: true,
+  });
+  if (!picked.ok) {
+    if (picked.reason === 'not_found') {
+      throw new Error(`经验要求没有「${target}」这一项。可选：${(picked.options ?? []).join('｜')}`);
+    }
+    throw new Error(`未找到经验要求控件（.exp-list-ui），等了 ${FILTER_PANEL_TIMEOUT_MS / 1000}s。`);
+  }
+  if (!picked.already) {
+    await sleepRandom(FILTER_SETTLE_MS.min, FILTER_SETTLE_MS.max);
+  }
+  return picked.label ?? target;
+}
+
+/**
+ * 年龄要求：`.age-list-ui` 里的单选项（20-25 / 25-30 / 30-35 / 35-40 / 40-50 / 50以上）。
+ * 「自定义」那对下拉（`.age-custom`，默认 `display:none`）同样没做。
+ */
+export async function selectNormalSearchAge(frame: Frame, age: string): Promise<string> {
+  const target = age.trim();
+  if (!target) {
+    return '';
+  }
+  const picked = await clickFilterItem(frame, '.age-list-ui', '.age-item', target, {
+    skipIfActive: true,
+  });
+  if (!picked.ok) {
+    if (picked.reason === 'not_found') {
+      throw new Error(`年龄要求没有「${target}」这一项。可选：${(picked.options ?? []).join('｜')}`);
+    }
+    throw new Error(`未找到年龄要求控件（.age-list-ui），等了 ${FILTER_PANEL_TIMEOUT_MS / 1000}s。`);
+  }
+  if (!picked.already) {
+    await sleepRandom(FILTER_SETTLE_MS.min, FILTER_SETTLE_MS.max);
+  }
+  return picked.label ?? target;
+}
+
 /**
  * 院校要求：`.school-ui` 里的多选框（统招本科 / 双一流院校 / 211院校 / 985院校 /
  * 留学生 / QS 100 / QS 500），以及单独一个「只看第一学历」（提示语写明＝第一学历为全日制本科）。
@@ -565,6 +624,20 @@ export async function selectNormalSearchSchools(frame: Frame, labels: string[]):
 async function readSelectedDegree(frame: Frame): Promise<string> {
   return (await frame.evaluate(`(() => {
     const el = document.querySelector(".degree-ui .degree-item.active");
+    const t = (el?.textContent ?? "").replace(/\\s+/g, " ").trim();
+    return t === "不限" ? "" : t;
+  })()`)) as string;
+}
+
+/**
+ * 读「经验要求」/「年龄要求」当前选中项；「不限」＝没筛，返回空串。
+ *
+ * 这两块和 `.degree-ui` 长得一模一样（单选 `span`，选中带 `.active`），
+ * 但它们**不在**「其他筛选」里，是两个独立的顶层块，别到 `.more-filter-container` 里找。
+ */
+async function readActiveFilterItem(frame: Frame, rootSel: string, itemSel: string): Promise<string> {
+  return (await frame.evaluate(`(() => {
+    const el = document.querySelector("${rootSel} ${itemSel}.active");
     const t = (el?.textContent ?? "").replace(/\\s+/g, " ").trim();
     return t === "不限" ? "" : t;
   })()`)) as string;
@@ -636,6 +709,8 @@ async function readOtherFilters(frame: Frame): Promise<string[]> {
 export async function resetNormalSearchFilters(frame: Frame): Promise<boolean> {
   const dirty =
     (await readSelectedDegree(frame)) !== '' ||
+    (await readSelectedExp(frame)) !== '' ||
+    (await readSelectedAge(frame)) !== '' ||
     (await readSelectedSchools(frame)).length > 0 ||
     (await readOtherFilters(frame)).length > 0;
   if (!dirty) {
@@ -659,10 +734,15 @@ export async function resetNormalSearchFilters(frame: Frame): Promise<boolean> {
   // 清空会让整个筛选区重渲染一遍，等它落定再去设新条件，否则后面的点击会扑空。
   await frame.waitForFunction(
     `(() => {
-      const active = document.querySelector(".degree-ui .degree-item.active");
-      const degreeOk = !active || (active.textContent ?? "").replace(/\\s+/g, "").trim() === "不限";
+      const isDefault = (sel) => {
+        const el = document.querySelector(sel);
+        return !el || (el.textContent ?? "").replace(/\\s+/g, "").trim() === "不限";
+      };
       const schoolOk = Array.from(document.querySelectorAll(".school-ui input.checkbox-input")).every((el) => !el.checked);
-      return degreeOk && schoolOk;
+      return isDefault(".degree-ui .degree-item.active")
+        && isDefault(".exp-list-ui .exp-item.active")
+        && isDefault(".age-list-ui .age-item.active")
+        && schoolOk;
     })()`,
     { timeout: FILTER_PANEL_TIMEOUT_MS },
   );
@@ -1071,6 +1151,8 @@ function renderNormalSearchCandidates(
     job: string;
     city?: string;
     degree?: string;
+    exp?: string;
+    age?: string;
     schools?: string[];
     others?: string[];
   },
@@ -1083,6 +1165,8 @@ function renderNormalSearchCandidates(
     meta.city ? `城市：${meta.city}` : '',
     meta.degree ? `学历：${meta.degree}` : '',
     (meta.schools ?? []).length > 0 ? `院校：${(meta.schools ?? []).join('+')}` : '',
+    meta.exp ? `经验：${meta.exp}` : '',
+    meta.age ? `年龄：${meta.age}` : '',
     ...(meta.others ?? []),
   ].filter(Boolean);
   const lines = [
@@ -1233,6 +1317,10 @@ export type NormalSearchOptions = {
   city?: string;
   degree?: string;
   schools?: string[];
+  /** 经验要求，单选：在校/应届 / 25年毕业 / 1-3年 / 3-5年 / 5-10年 等 */
+  exp?: string;
+  /** 年龄要求，单选：20-25 / 25-30 / 30-35 / 35-40 / 40-50 / 50以上 */
+  age?: string;
   /** 求职状态，可多选：离职-随时到岗 / 在职-暂不考虑 / 在职-考虑机会 / 在职-月内到岗 */
   status?: string[];
   /** 跳槽频率，单选：5年少于3份 / 时间≥1年 */
@@ -1247,6 +1335,8 @@ export async function runNormalSearch(opts: NormalSearchOptions = {}): Promise<s
   const city = (opts.city ?? defaultSearchCityFromEnv()).trim();
   const degree = (opts.degree ?? '').trim();
   const schools = (opts.schools ?? []).map((s) => s.trim()).filter(Boolean);
+  const exp = (opts.exp ?? '').trim();
+  const age = (opts.age ?? '').trim();
   const status = (opts.status ?? []).map((s) => s.trim()).filter(Boolean);
   const jobHop = (opts.jobHop ?? '').trim();
   const majors = (opts.majors ?? []).map((s) => s.trim()).filter(Boolean);
@@ -1286,6 +1376,12 @@ export async function runNormalSearch(opts: NormalSearchOptions = {}): Promise<s
       if (schools.length > 0) {
         await selectNormalSearchSchools(frame, schools);
       }
+      if (exp) {
+        await selectNormalSearchExp(frame, exp);
+      }
+      if (age) {
+        await selectNormalSearchAge(frame, age);
+      }
       if (status.length > 0) {
         await selectNormalSearchStatus(frame, status);
       }
@@ -1301,22 +1397,35 @@ export async function runNormalSearch(opts: NormalSearchOptions = {}): Promise<s
       }
 
       // 回显一律读页面实时状态，不打入参——见 readSelectedDegree 的注释。
-      const [currentKeyword, currentJob, currentCity, currentDegree, currentSchools, others, candidates] =
-        await Promise.all([
-          readNormalSearchKeyword(frame),
-          readCurrentSearchJob(frame),
-          readSelectedCity(frame),
-          readSelectedDegree(frame),
-          readSelectedSchools(frame),
-          readOtherFilters(frame),
-          readNormalSearchCandidates(frame),
-        ]);
+      const [
+        currentKeyword,
+        currentJob,
+        currentCity,
+        currentDegree,
+        currentSchools,
+        currentExp,
+        currentAge,
+        others,
+        candidates,
+      ] = await Promise.all([
+        readNormalSearchKeyword(frame),
+        readCurrentSearchJob(frame),
+        readSelectedCity(frame),
+        readSelectedDegree(frame),
+        readSelectedSchools(frame),
+        readSelectedExp(frame),
+        readSelectedAge(frame),
+        readOtherFilters(frame),
+        readNormalSearchCandidates(frame),
+      ]);
       return renderNormalSearchCandidates(candidates, {
         keyword: currentKeyword || kw,
         job: currentJob,
         city: currentCity,
         degree: currentDegree,
         schools: currentSchools,
+        exp: currentExp,
+        age: currentAge,
         others,
       });
     });

@@ -175,7 +175,8 @@ function printHelp(): void {
   boss recommend [岗位关键字]
       进入推荐页并读取推荐列表；带岗位关键字时先在岗位下拉中模糊匹配并切换
   boss search [关键词] [--job <岗位>] [--city <城市>] [--degree <学历>] [--school <院校要求>]
-              [--status <求职状态>] [--job-hop <跳槽频率>] [--major <专业>]
+              [--exp <经验要求>] [--age <年龄要求>] [--status <求职状态>] [--job-hop <跳槽频率>]
+              [--major <专业>]
       进入「搜索」页并读取常规搜索结果；带关键词时填入搜索框并回车搜索
       **每次搜索前都会先点「清空筛选」**，条件不再跨命令粘着
       --job     在岗位下拉中模糊匹配并切换；不传则切「不限职位」（不再沿用上次的岗位）
@@ -184,6 +185,10 @@ function printHelp(): void {
       --degree  学历要求：不限 / 本科及以上 / 硕士及以上 / 博士
       --school  院校要求，可多选用逗号分隔：统招本科 / 双一流院校 / 211院校 / 985院校 /
                 留学生 / QS 100 / QS 500 / 只看第一学历（页面提示＝第一学历为全日制本科）
+      --exp     经验要求，单选：在校/应届 / 25年毕业 / 26年毕业 / 26年后毕业 / 1-3年 /
+                3-5年 / 5-10年（页面上的「自定义」滑块没做）
+      --age     年龄要求，单选：20-25 / 25-30 / 30-35 / 35-40 / 40-50 / 50以上
+                （页面上的「自定义」区间没做）
       --status  求职状态，可多选用逗号分隔：离职-随时到岗 / 在职-暂不考虑 / 在职-考虑机会 /
                 在职-月内到岗
       --job-hop 跳槽频率，单选：5年少于3份 / 时间≥1年（≥ 可以写成 >=）
@@ -560,11 +565,21 @@ export async function executeCommand(argv: string[]): Promise<string> {
   if (cmd === 'search') {
     const { rest, opts, flags } = parseOpts(tail);
     const usage =
-      '❌ 用法: search [关键词] [--job <岗位关键字>] [--city <城市>] [--degree <学历>] [--school <院校要求,逗号分隔>] [--status <求职状态,逗号分隔>] [--job-hop <跳槽频率>] [--major <专业,逗号分隔>]';
+      '❌ 用法: search [关键词] [--job <岗位关键字>] [--city <城市>] [--degree <学历>] [--school <院校要求,逗号分隔>] [--exp <经验要求>] [--age <年龄要求>] [--status <求职状态,逗号分隔>] [--job-hop <跳槽频率>] [--major <专业,逗号分隔>]';
     if (flags.size > 0) {
       die(usage);
     }
-    const allowed = new Set(['job', 'city', 'degree', 'school', 'status', 'job-hop', 'major']);
+    const allowed = new Set([
+      'job',
+      'city',
+      'degree',
+      'school',
+      'exp',
+      'age',
+      'status',
+      'job-hop',
+      'major',
+    ]);
     const extraOpts = Object.keys(opts).filter((k) => !allowed.has(k));
     if (extraOpts.length > 0) {
       die(usage);
@@ -576,6 +591,8 @@ export async function executeCommand(argv: string[]): Promise<string> {
       city: opts.city?.trim() || undefined,
       degree: opts.degree?.trim() || undefined,
       schools: parseFilterLabels(opts.school),
+      exp: opts.exp?.trim() || undefined,
+      age: opts.age?.trim() || undefined,
       status: parseFilterLabels(opts.status),
       jobHop: opts['job-hop']?.trim() || undefined,
       majors: parseFilterLabels(opts.major),
