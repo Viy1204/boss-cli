@@ -10,7 +10,13 @@ import {
 import { runSendChatMessage } from './send.js';
 import { withBossSessionPage } from '../common/boss_session_page.js';
 import { runBossSearch, runBossSearchSet } from './deep-search.js';
-import { runNormalSearch } from './normal-search.js';
+import { runNormalSearch, type NormalSearchOptions } from './normal-search.js';
+export {
+  parseFilterLabels,
+  normalizeFilterLabel,
+  defaultSearchCityFromEnv,
+} from './normal-search.js';
+export type { NormalSearchOptions };
 import { runRecommend } from './recommend.js';
 import { runPreview } from './preview.js';
 import { runRecommendGreet } from './greet.js';
@@ -94,8 +100,8 @@ export async function implBossSearch(
   return runBossSearch(opts);
 }
 
-export async function implNormalSearch(keyword?: string, jobKeyword?: string): Promise<string> {
-  return runNormalSearch(keyword, jobKeyword);
+export async function implNormalSearch(opts: NormalSearchOptions = {}): Promise<string> {
+  return runNormalSearch(opts);
 }
 
 export async function implBossSearchSet(opts: {

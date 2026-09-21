@@ -1,4 +1,7 @@
 import { type ChatPageAction } from './action.js';
+import { type NormalSearchOptions } from './normal-search.js';
+export { parseFilterLabels, normalizeFilterLabel, defaultSearchCityFromEnv, } from './normal-search.js';
+export type { NormalSearchOptions };
 export type { ChatPageAction };
 export type { DeepSearchGeekItem } from './deep-search.js';
 export declare function implLogin(): Promise<string>;
@@ -30,7 +33,7 @@ export declare function implBossSearch(opts?: {
     bonusRequirements?: string[];
     match?: boolean;
 }): Promise<string>;
-export declare function implNormalSearch(keyword?: string, jobKeyword?: string): Promise<string>;
+export declare function implNormalSearch(opts?: NormalSearchOptions): Promise<string>;
 export declare function implBossSearchSet(opts: {
     jobKeyword?: string;
     coreRequirements?: string[];

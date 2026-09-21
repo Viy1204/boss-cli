@@ -83,3 +83,29 @@ RECRUIT_BROWSER_HIDDEN=false boss <cmd>    # 或 BOSS_BROWSER_HEADLESS=false
 - 在工具代码中，避免使用 `page.evaluate(() => { ... })` / `page.waitForFunction(() => { ... })` 的函数写法。
 - 统一改为字符串脚本写法（如 `page.evaluate("(() => { ... })()")`），避免构建后注入辅助符号导致浏览器上下文报错 `__name is not defined`。
 - 出现 `__name is not defined` 时，优先检查最近新增的 evaluate / waitForFunction 回调并改成字符串脚本，不要加兜底掩盖问题。
+
+### ⚠️ 字符串脚本**收不到入参**（2026-09-21 实测）
+
+上面这条约束有个配套陷阱：**`evaluate(字符串, 入参)` 的入参会被静默丢弃**。puppeteer 对字符串形式的
+pageFunction 是直接 `Runtime.evaluate` 当表达式求值的，压根不走 `callFunctionOn`，后面的参数无处可去。
+
+```ts
+await frame.evaluate(`((x) => ({ got: x }))`, 'HELLO');   // → {}    ，不是 { got: 'HELLO' }
+await frame.waitForFunction(`((x) => x === "NEVER")`, { timeout: 3000 }, 'NO');  // → 6ms 就通过
+```
+
+两种后果都很阴：`evaluate` 拿到的是**函数对象**（`{}`，所有 `r.ok` 判断恒假）；`waitForFunction`
+的判据是**函数对象**（恒真，等待变空转）。两者都不报错。
+
+**唯一正确写法：把值 `JSON.stringify` 内联进脚本字符串。**
+
+```ts
+await frame.evaluate(`(() => ({ got: ${JSON.stringify(value)} }))()`);
+```
+
+`normal-search.ts` 的三处已按此修正（关键词回填校验、岗位切换校验、城市选项匹配——城市那处
+是功能性坏掉：`picked` 恒为 `{}`，每次都报「查无此项」）。
+
+**以下位置仍是旧写法，还没修**（都在本次改动范围外，动它们前要在真实页面上重新验收，因为把空转的
+等待改成真等待可能暴露出新的超时）：`common/boss_sidebar_nav.ts:46`、`toolset/action.ts:392`、
+`toolset/deep-search.ts:1271` 与 `:1283`、`toolset/recommend.ts:123` 与 `:135`。

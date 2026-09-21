@@ -20,6 +20,7 @@ import {
   implListPositions,
   implListPositionsWithOptions,
   implNormalSearch,
+  parseFilterLabels,
   implOpenChat,
   implRecommend,
   implPreview,
@@ -173,9 +174,21 @@ function printHelp(): void {
       抓取指定职位详情并缓存到项目目录同名 .md
   boss recommend [岗位关键字]
       进入推荐页并读取推荐列表；带岗位关键字时先在岗位下拉中模糊匹配并切换
-  boss search [关键词] [--job <岗位关键字>]
-      进入「搜索」页并读取 Boss 默认常规搜索结果；带关键词时填入搜索框并回车搜索；
-      带 --job 时先在岗位下拉中模糊匹配并切换到该岗位再搜索
+  boss search [关键词] [--job <岗位>] [--city <城市>] [--degree <学历>] [--school <院校要求>]
+              [--status <求职状态>] [--job-hop <跳槽频率>] [--major <专业>]
+      进入「搜索」页并读取常规搜索结果；带关键词时填入搜索框并回车搜索
+      **每次搜索前都会先点「清空筛选」**，条件不再跨命令粘着
+      --job     在岗位下拉中模糊匹配并切换；不传则切「不限职位」（不再沿用上次的岗位）
+      --city    搜索城市，如 --city 深圳；不传则读环境变量 BOSS_SEARCH_CITY，仍为空则不限城市
+                只接受完全匹配的联想项，匹配不上会报错并列出候选，不会替你猜
+      --degree  学历要求：不限 / 本科及以上 / 硕士及以上 / 博士
+      --school  院校要求，可多选用逗号分隔：统招本科 / 双一流院校 / 211院校 / 985院校 /
+                留学生 / QS 100 / QS 500 / 只看第一学历（页面提示＝第一学历为全日制本科）
+      --status  求职状态，可多选用逗号分隔：离职-随时到岗 / 在职-暂不考虑 / 在职-考虑机会 /
+                在职-月内到岗
+      --job-hop 跳槽频率，单选：5年少于3份 / 时间≥1年（≥ 可以写成 >=）
+      --major   专业，可多选用逗号分隔，最多 10 个；只认完全匹配（如「计算机科学与技术」）
+      生效的筛选条件会回显在结果标题里，读的是页面实时状态而不是你传的参数
   boss preview <姓名>
       在线简历预览：须当前已在「推荐」(/web/chat/recommend)、「深度搜索」(/web/chat/aiform) 或「常规搜索」(/web/chat/search) 且列表已加载；不会自动跳转
       注意：平台对在线简历每日可查看次数有限，请按需使用、谨慎查看
@@ -546,16 +559,27 @@ export async function executeCommand(argv: string[]): Promise<string> {
 
   if (cmd === 'search') {
     const { rest, opts, flags } = parseOpts(tail);
+    const usage =
+      '❌ 用法: search [关键词] [--job <岗位关键字>] [--city <城市>] [--degree <学历>] [--school <院校要求,逗号分隔>] [--status <求职状态,逗号分隔>] [--job-hop <跳槽频率>] [--major <专业,逗号分隔>]';
     if (flags.size > 0) {
-      die('❌ 用法: search [关键词] [--job <岗位关键字>]');
+      die(usage);
     }
-    const jobKeyword = opts.job?.trim();
-    const extraOpts = Object.keys(opts).filter((k) => k !== 'job');
+    const allowed = new Set(['job', 'city', 'degree', 'school', 'status', 'job-hop', 'major']);
+    const extraOpts = Object.keys(opts).filter((k) => !allowed.has(k));
     if (extraOpts.length > 0) {
-      die('❌ 用法: search [关键词] [--job <岗位关键字>]');
+      die(usage);
     }
     const keyword = rest.join(' ').trim();
-    return implNormalSearch(keyword || undefined, jobKeyword || undefined);
+    return implNormalSearch({
+      keyword: keyword || undefined,
+      jobKeyword: opts.job?.trim() || undefined,
+      city: opts.city?.trim() || undefined,
+      degree: opts.degree?.trim() || undefined,
+      schools: parseFilterLabels(opts.school),
+      status: parseFilterLabels(opts.status),
+      jobHop: opts['job-hop']?.trim() || undefined,
+      majors: parseFilterLabels(opts.major),
+    });
   }
 
   if (cmd === 'preview') {
