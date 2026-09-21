@@ -18,6 +18,10 @@ const FILTER_PANEL_TIMEOUT_MS = 10_000;
 const FILTER_SETTLE_MS = { min: 600, max: 1200 };
 /** 平台对「专业」的限制，弹层标题写死「最多选择10个」。 */
 const MAJOR_MAX_SELECT = 10;
+/** 滑块拖几次还没停在目标档位就认输报错，别无限纠偏。 */
+const SLIDER_MAX_ATTEMPTS = 6;
+/** 年龄下拉里「46岁+」这一项在 hidden 里存的哨兵值（实测）。 */
+const AGE_PLUS_HIDDEN_VALUE = 10000;
 /**
  * 页面上有两个 `.major-dialog`（专业、资格证书），没展开的那个 `display:none` 但仍在 DOM 里。
  * 所有弹层内的查找都得先挑出可见的那个，否则会操作到「资格证书」的控件上。
@@ -58,6 +62,65 @@ export function parseFilterLabels(raw) {
  */
 export function normalizeFilterLabel(raw) {
     return raw.trim().replace(/>=/g, '≥');
+}
+/**
+ * 拆 `--exp-range` / `--age-range` 的 `下限-上限`。
+ * 半角/全角连字符和波浪号都收，理由同逗号：中文输入法下这几个键太容易打串。
+ */
+export function parseRangeArg(raw) {
+    const parts = raw
+        .trim()
+        .split(/[-－~～]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+    if (parts.length !== 2) {
+        throw new Error(`区间要写成「下限-上限」两段，收到「${raw}」。`);
+    }
+    return { min: parts[0], max: parts[1] };
+}
+/**
+ * 经验滑块共 12 档，档位文案是实测出来的（拖到各个百分比读 tooltip）：
+ * 1=在校/应届，2..11=「(档位-1)年」，12=10年以上。
+ */
+export const EXP_SLIDER_STOPS = 12;
+export function expSliderLabel(index) {
+    if (index === 1) {
+        return '在校/应届';
+    }
+    if (index === EXP_SLIDER_STOPS) {
+        return '10年以上';
+    }
+    return `${index - 1}年`;
+}
+/**
+ * 把 `--exp-range` 的一段转成滑块档位。收 `应届`、`0`~`10`、`10+`。
+ * 不认的值直接报错——猜错档位＝搜错人群，而且用户不会发现。
+ */
+export function expTokenToIndex(token) {
+    const t = token.trim();
+    if (t === '应届' || t === '在校' || t === '在校/应届' || t === '0') {
+        return 1;
+    }
+    if (t === '10+' || t === '10以上' || t === '10年以上') {
+        return EXP_SLIDER_STOPS;
+    }
+    const years = Number(t.replace(/年$/, ''));
+    if (!Number.isInteger(years) || years < 1 || years > 10) {
+        throw new Error(`经验区间只认「应届」、1-10 的整数年、或「10+」，收到「${token}」。`);
+    }
+    return years + 1;
+}
+/** 把 `--age-range` 的一段转成年龄下拉里的文案。收 `16`~`46` 与 `46+`。 */
+export function ageTokenToLabel(token) {
+    const t = token.trim();
+    if (t === '46+' || t === '46以上' || t === '46岁+') {
+        return '46岁+';
+    }
+    const age = Number(t.replace(/岁$/, ''));
+    if (!Number.isInteger(age) || age < 16 || age > 46) {
+        throw new Error(`年龄区间只认 16-46 的整数、或「46+」，收到「${token}」。`);
+    }
+    return `${age}岁`;
 }
 export function isBossChatSearchUrl(url) {
     try {
@@ -426,11 +489,26 @@ export async function selectNormalSearchDegree(frame, degree) {
     }
     return picked.label ?? target;
 }
+/**
+ * 经验要求：预设项和自定义滑块是互斥的两条路，读的时候两条都得看。
+ * 只看预设项的话，用自定义区间筛出来的结果标题里会什么都不显示。
+ */
 async function readSelectedExp(frame) {
-    return readActiveFilterItem(frame, '.exp-list-ui', '.exp-item');
+    const preset = await readActiveFilterItem(frame, '.exp-list-ui', '.exp-item');
+    if (preset) {
+        return preset;
+    }
+    const range = await readExpSliderRange(frame);
+    return range ? `${expSliderLabel(range.min)}-${expSliderLabel(range.max)}（自定义）` : '';
 }
+/** 年龄要求：同上，预设项之外还要看自定义的那两个下拉。 */
 async function readSelectedAge(frame) {
-    return readActiveFilterItem(frame, '.age-list-ui', '.age-item');
+    const preset = await readActiveFilterItem(frame, '.age-list-ui', '.age-item');
+    if (preset) {
+        return preset;
+    }
+    const range = await readAgeCustomRange(frame);
+    return range ? `${range.min}-${range.max}（自定义）` : '';
 }
 /**
  * 经验要求：`.exp-list-ui` 里的单选项
@@ -480,6 +558,187 @@ export async function selectNormalSearchAge(frame, age) {
         await sleepRandom(FILTER_SETTLE_MS.min, FILTER_SETTLE_MS.max);
     }
     return picked.label ?? target;
+}
+/** 读经验滑块的当前档位；`null` 表示还是默认的整段（＝没用自定义）。 */
+async function readExpSliderRange(frame) {
+    const raw = (await frame.evaluate(`(() => document.querySelector(".experience-select-custom-slider .ui-slider input[type=hidden]")?.value ?? "")()`));
+    const [min, max] = raw.split(',').map((s) => Number(s));
+    if (!Number.isInteger(min) || !Number.isInteger(max)) {
+        return null;
+    }
+    if (min === 1 && max === EXP_SLIDER_STOPS) {
+        return null;
+    }
+    return { min, max };
+}
+/**
+ * 拖经验滑块到指定档位区间。
+ *
+ * ⚠️ **拖完必须按 hidden input 的真实档位校验并纠偏**，不能拖完就当成了：
+ * 本机实测按百分比一把拖过去经常差一格（要第 4 档落在第 3 档、要第 9 档落在第 8 档），
+ * 因为按下的位置是手柄中心、而手柄本身有 12px 宽，半格的偏移足够跨过吸附边界。
+ * 差一格就是搜错人群，而且用户完全看不出来。
+ *
+ * 也没有键盘可用——手柄拿不到焦点，方向键实测无效。
+ */
+async function dragExpSlider(page, frame, minIndex, maxIndex) {
+    const barSel = '.experience-select-custom-slider .ui-slider-wrap';
+    const bar = await frame.$(barSel);
+    const barBox = await bar?.boundingBox();
+    if (!barBox) {
+        throw new Error('未找到经验自定义滑块（.experience-select-custom-slider）。');
+    }
+    const stepPx = barBox.width / (EXP_SLIDER_STOPS - 1);
+    // 先拖右手柄再拖左手柄：清空后默认是 [1, 12]，右手柄往左收不会被左手柄挡住。
+    await dragOneHandle(page, frame, barBox.x, stepPx, 1, maxIndex);
+    await dragOneHandle(page, frame, barBox.x, stepPx, 0, minIndex);
+}
+async function dragOneHandle(page, frame, barLeft, stepPx, handleIndex, targetIndex) {
+    const targetX = barLeft + (targetIndex - 1) * stepPx;
+    for (let attempt = 0; attempt < SLIDER_MAX_ATTEMPTS; attempt++) {
+        const handles = await frame.$$('.experience-select-custom-slider .ui-slider-button-wrap');
+        const box = await handles[handleIndex]?.boundingBox();
+        if (!box) {
+            throw new Error('未找到经验滑块的拖动手柄（.ui-slider-button-wrap）。');
+        }
+        const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+        const landed = await readSliderIndices(frame);
+        const current = handleIndex === 0 ? landed.min : landed.max;
+        if (current === targetIndex) {
+            return;
+        }
+        /**
+         * 每一轮都按**目标的绝对位置**拖，不做「还差几格」的相对纠偏——
+         * 相对纠偏实测会卡死在差一格的位置反复横跳（连拖 6 次都停在「2年」）。
+         *
+         * 松手前那一下 0.5px 的微动 + 停顿是必须的：最后一个 mousemove 会被帧合并吃掉，
+         * 组件按上一帧的位置吸附。加上之后实测 5 次里 4 次一把到位，剩下的交给重试。
+         */
+        await page.mouse.move(from.x, from.y);
+        await page.mouse.down();
+        await sleepRandom(120, 200);
+        await page.mouse.move(targetX, from.y, { steps: 20 });
+        await sleepRandom(120, 200);
+        await page.mouse.move(targetX + 0.5, from.y);
+        await sleepRandom(300, 420);
+        await page.mouse.up();
+        await sleepRandom(FILTER_SETTLE_MS.min, FILTER_SETTLE_MS.max);
+    }
+    const final = await readSliderIndices(frame);
+    const got = handleIndex === 0 ? final.min : final.max;
+    if (got !== targetIndex) {
+        throw new Error(`经验滑块拖了 ${SLIDER_MAX_ATTEMPTS} 次也没停在「${expSliderLabel(targetIndex)}」，当前停在「${expSliderLabel(got)}」。`);
+    }
+}
+async function readSliderIndices(frame) {
+    const raw = (await frame.evaluate(`(() => document.querySelector(".experience-select-custom-slider .ui-slider input[type=hidden]")?.value ?? "")()`));
+    const [min, max] = raw.split(',').map((s) => Number(s));
+    return { min, max };
+}
+/**
+ * 经验要求（自定义区间）：拖 `.experience-select-custom-slider` 的双手柄滑块。
+ * 一拖动，预设那排的「不限」就会自动取消，两者是互斥的。
+ */
+export async function selectNormalSearchExpRange(page, frame, minToken, maxToken) {
+    const minIndex = expTokenToIndex(minToken);
+    const maxIndex = expTokenToIndex(maxToken);
+    if (minIndex > maxIndex) {
+        throw new Error(`经验区间的下限「${expSliderLabel(minIndex)}」比上限「${expSliderLabel(maxIndex)}」还大。`);
+    }
+    await dragExpSlider(page, frame, minIndex, maxIndex);
+    await sleepRandom(FILTER_SETTLE_MS.min, FILTER_SETTLE_MS.max);
+    return `${expSliderLabel(minIndex)}-${expSliderLabel(maxIndex)}`;
+}
+/**
+ * 读年龄自定义的两个下拉；没展开或没选满两头就返回 `null`。
+ *
+ * ⚠️ 值在 **`input[type=hidden]`** 上，不在可见的那个 `input.ipt`——后者选完仍然是空的
+ * （和「跳槽频率」那种把文案写进 `span.ipt` 的下拉不是一个渲染方式）。
+ * 取值实测：普通年龄存数字本身，「46岁+」存 `10000`，「不限」存 `-1`，没选过是 `0`。
+ */
+async function readAgeCustomRange(frame) {
+    const raw = (await frame.evaluate(`(() => {
+    const box = document.querySelector(".age-custom");
+    if (!box || getComputedStyle(box).display === "none") return null;
+    const vals = Array.from(box.querySelectorAll(".dropdown-wrap")).map((w) => w.querySelector('input[type=hidden]')?.value ?? "");
+    return vals.length === 2 ? vals : null;
+  })()`));
+    if (!raw) {
+        return null;
+    }
+    const labels = raw.map((v) => ageHiddenToLabel(v));
+    if (labels.some((v) => !v)) {
+        return null;
+    }
+    return { min: labels[0], max: labels[1] };
+}
+/** 年龄下拉的 hidden 值 → 页面文案；`0`（没选）和 `-1`（不限）都算"没筛"。 */
+function ageHiddenToLabel(raw) {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n === 0 || n === -1) {
+        return '';
+    }
+    return n >= AGE_PLUS_HIDDEN_VALUE ? '46岁+' : `${n}岁`;
+}
+/**
+ * 年龄要求（自定义区间）：点「自定义」展开 `.age-custom`，里面是两个下拉（16岁…46岁+）。
+ * 和经验那个滑块不一样，这里是规规矩矩的下拉，选完读回 `span.ipt` 校验。
+ */
+export async function selectNormalSearchAgeRange(frame, minToken, maxToken) {
+    const minLabel = ageTokenToLabel(minToken);
+    const maxLabel = ageTokenToLabel(maxToken);
+    const opened = await evalWithPanelRetry(frame, `(() => {
+      const custom = document.querySelector(".age-list-ui .custom");
+      if (!(custom instanceof HTMLElement)) return { ok: false, reason: "no_root" };
+      const box = document.querySelector(".age-custom");
+      if (box && getComputedStyle(box).display !== "none") return { ok: true };
+      custom.scrollIntoView({ block: "center", inline: "nearest" });
+      custom.click();
+      return { ok: true };
+    })()`);
+    if (!opened.ok) {
+        throw new Error(`未找到年龄的「自定义」入口（.age-list-ui .custom），等了 ${FILTER_PANEL_TIMEOUT_MS / 1000}s。`);
+    }
+    await sleepRandom(FILTER_SETTLE_MS.min, FILTER_SETTLE_MS.max);
+    await pickAgeCustomDropdown(frame, 0, minLabel);
+    await pickAgeCustomDropdown(frame, 1, maxLabel);
+    // 两头都选完再校验一次页面上真实显示的值，别拿入参当结果。
+    const got = await readAgeCustomRange(frame);
+    if (!got || got.min !== minLabel || got.max !== maxLabel) {
+        throw new Error(`年龄自定义区间没落到「${minLabel}-${maxLabel}」，页面现在显示：${got ? `${got.min}-${got.max}` : '（空）'}。`);
+    }
+    return `${minLabel}-${maxLabel}`;
+}
+async function pickAgeCustomDropdown(frame, index, label) {
+    const opened = await evalWithPanelRetry(frame, `(() => {
+      const wrap = document.querySelectorAll(".age-custom .dropdown-wrap")[${index}];
+      if (!wrap) return { ok: false, reason: "no_root" };
+      const trigger = wrap.querySelector(".dropdown-select");
+      if (!(trigger instanceof HTMLElement)) return { ok: false, reason: "no_root" };
+      trigger.scrollIntoView({ block: "center", inline: "nearest" });
+      trigger.click();
+      return { ok: true };
+    })()`);
+    if (!opened.ok) {
+        throw new Error('未找到年龄自定义的下拉（.age-custom .dropdown-wrap）。');
+    }
+    await sleepRandom(FILTER_SETTLE_MS.min, FILTER_SETTLE_MS.max);
+    const picked = (await frame.evaluate(`(() => {
+    const norm = (v) => (v ?? "").replace(/\\s+/g, "").trim();
+    const wrap = document.querySelectorAll(".age-custom .dropdown-wrap")[${index}];
+    if (!wrap) return { ok: false, reason: "no_root" };
+    const options = Array.from(wrap.querySelectorAll(".dropdown-menu li"));
+    const hit = options.find((el) => norm(el.textContent) === norm(${JSON.stringify(label)}));
+    if (!(hit instanceof HTMLElement)) {
+      return { ok: false, reason: "not_found", options: options.map((el) => norm(el.textContent)) };
+    }
+    hit.click();
+    return { ok: true, label: norm(hit.textContent) };
+  })()`));
+    if (!picked.ok) {
+        throw new Error(`年龄下拉里没有「${label}」这一项。可选：${(picked.options ?? []).join('｜') || '（菜单未展开）'}`);
+    }
+    await sleepRandom(FILTER_SETTLE_MS.min, FILTER_SETTLE_MS.max);
 }
 /**
  * 院校要求：`.school-ui` 里的多选框（统招本科 / 双一流院校 / 211院校 / 985院校 /
@@ -617,10 +876,15 @@ export async function resetNormalSearchFilters(frame) {
         return !el || (el.textContent ?? "").replace(/\\s+/g, "").trim() === "不限";
       };
       const schoolOk = Array.from(document.querySelectorAll(".school-ui input.checkbox-input")).every((el) => !el.checked);
+      // 自定义区间也要回到默认，否则下一轮会在上一轮的滑块位置上继续拖。
+      const slider = document.querySelector(".experience-select-custom-slider .ui-slider input[type=hidden]");
+      const sliderOk = !slider || slider.value === "1,${EXP_SLIDER_STOPS}";
+      const ageBox = document.querySelector(".age-custom");
+      const ageOk = !ageBox || getComputedStyle(ageBox).display === "none";
       return isDefault(".degree-ui .degree-item.active")
         && isDefault(".exp-list-ui .exp-item.active")
         && isDefault(".age-list-ui .age-item.active")
-        && schoolOk;
+        && schoolOk && sliderOk && ageOk;
     })()`, { timeout: FILTER_PANEL_TIMEOUT_MS });
     await sleepRandom(FILTER_SETTLE_MS.min, FILTER_SETTLE_MS.max);
     return true;
@@ -1102,7 +1366,15 @@ export async function runNormalSearch(opts = {}) {
     const degree = (opts.degree ?? '').trim();
     const schools = (opts.schools ?? []).map((s) => s.trim()).filter(Boolean);
     const exp = (opts.exp ?? '').trim();
+    const expRange = (opts.expRange ?? '').trim();
     const age = (opts.age ?? '').trim();
+    const ageRange = (opts.ageRange ?? '').trim();
+    if (exp && expRange) {
+        throw new Error('--exp 和 --exp-range 只能给一个：预设档位和自定义区间在页面上是互斥的。');
+    }
+    if (age && ageRange) {
+        throw new Error('--age 和 --age-range 只能给一个：预设档位和自定义区间在页面上是互斥的。');
+    }
     const status = (opts.status ?? []).map((s) => s.trim()).filter(Boolean);
     const jobHop = (opts.jobHop ?? '').trim();
     const majors = (opts.majors ?? []).map((s) => s.trim()).filter(Boolean);
@@ -1143,8 +1415,16 @@ export async function runNormalSearch(opts = {}) {
             if (exp) {
                 await selectNormalSearchExp(frame, exp);
             }
+            if (expRange) {
+                const { min, max } = parseRangeArg(expRange);
+                await selectNormalSearchExpRange(page, frame, min, max);
+            }
             if (age) {
                 await selectNormalSearchAge(frame, age);
+            }
+            if (ageRange) {
+                const { min, max } = parseRangeArg(ageRange);
+                await selectNormalSearchAgeRange(frame, min, max);
             }
             if (status.length > 0) {
                 await selectNormalSearchStatus(frame, status);

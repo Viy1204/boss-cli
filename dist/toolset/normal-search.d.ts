@@ -15,6 +15,27 @@ export declare function parseFilterLabels(raw: string | undefined): string[];
  * 允许用户写 `>=`，映射到页面上的真实文案；其余一律按原样完全匹配。
  */
 export declare function normalizeFilterLabel(raw: string): string;
+/**
+ * 拆 `--exp-range` / `--age-range` 的 `下限-上限`。
+ * 半角/全角连字符和波浪号都收，理由同逗号：中文输入法下这几个键太容易打串。
+ */
+export declare function parseRangeArg(raw: string): {
+    min: string;
+    max: string;
+};
+/**
+ * 经验滑块共 12 档，档位文案是实测出来的（拖到各个百分比读 tooltip）：
+ * 1=在校/应届，2..11=「(档位-1)年」，12=10年以上。
+ */
+export declare const EXP_SLIDER_STOPS = 12;
+export declare function expSliderLabel(index: number): string;
+/**
+ * 把 `--exp-range` 的一段转成滑块档位。收 `应届`、`0`~`10`、`10+`。
+ * 不认的值直接报错——猜错档位＝搜错人群，而且用户不会发现。
+ */
+export declare function expTokenToIndex(token: string): number;
+/** 把 `--age-range` 的一段转成年龄下拉里的文案。收 `16`~`46` 与 `46+`。 */
+export declare function ageTokenToLabel(token: string): string;
 export declare function isBossChatSearchUrl(url: string): boolean;
 export declare function assertNormalSearchPageReadyForPreview(page: Page): Promise<Frame>;
 export declare function readNormalSearchSelectedJobLabel(frame: Frame): Promise<string>;
@@ -56,6 +77,16 @@ export declare function selectNormalSearchExp(frame: Frame, exp: string): Promis
  * 「自定义」那对下拉（`.age-custom`，默认 `display:none`）同样没做。
  */
 export declare function selectNormalSearchAge(frame: Frame, age: string): Promise<string>;
+/**
+ * 经验要求（自定义区间）：拖 `.experience-select-custom-slider` 的双手柄滑块。
+ * 一拖动，预设那排的「不限」就会自动取消，两者是互斥的。
+ */
+export declare function selectNormalSearchExpRange(page: Page, frame: Frame, minToken: string, maxToken: string): Promise<string>;
+/**
+ * 年龄要求（自定义区间）：点「自定义」展开 `.age-custom`，里面是两个下拉（16岁…46岁+）。
+ * 和经验那个滑块不一样，这里是规规矩矩的下拉，选完读回 `span.ipt` 校验。
+ */
+export declare function selectNormalSearchAgeRange(frame: Frame, minToken: string, maxToken: string): Promise<string>;
 /**
  * 院校要求：`.school-ui` 里的多选框（统招本科 / 双一流院校 / 211院校 / 985院校 /
  * 留学生 / QS 100 / QS 500），以及单独一个「只看第一学历」（提示语写明＝第一学历为全日制本科）。
@@ -129,8 +160,12 @@ export type NormalSearchOptions = {
     schools?: string[];
     /** 经验要求，单选：在校/应届 / 25年毕业 / 1-3年 / 3-5年 / 5-10年 等 */
     exp?: string;
+    /** 经验要求的自定义区间，如 `3-8`；与 `exp` 互斥 */
+    expRange?: string;
     /** 年龄要求，单选：20-25 / 25-30 / 30-35 / 35-40 / 40-50 / 50以上 */
     age?: string;
+    /** 年龄要求的自定义区间，如 `23-27`；与 `age` 互斥 */
+    ageRange?: string;
     /** 求职状态，可多选：离职-随时到岗 / 在职-暂不考虑 / 在职-考虑机会 / 在职-月内到岗 */
     status?: string[];
     /** 跳槽频率，单选：5年少于3份 / 时间≥1年 */

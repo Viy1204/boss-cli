@@ -1,6 +1,6 @@
 import { type ChatPageAction } from './action.js';
 import { type NormalSearchOptions } from './normal-search.js';
-export { parseFilterLabels, normalizeFilterLabel, defaultSearchCityFromEnv, } from './normal-search.js';
+export { parseFilterLabels, normalizeFilterLabel, parseRangeArg, expTokenToIndex, expSliderLabel, ageTokenToLabel, defaultSearchCityFromEnv, } from './normal-search.js';
 export type { NormalSearchOptions };
 export type { ChatPageAction };
 export type { DeepSearchGeekItem } from './deep-search.js';

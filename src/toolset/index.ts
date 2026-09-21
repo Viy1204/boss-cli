@@ -14,6 +14,10 @@ import { runNormalSearch, type NormalSearchOptions } from './normal-search.js';
 export {
   parseFilterLabels,
   normalizeFilterLabel,
+  parseRangeArg,
+  expTokenToIndex,
+  expSliderLabel,
+  ageTokenToLabel,
   defaultSearchCityFromEnv,
 } from './normal-search.js';
 export type { NormalSearchOptions };

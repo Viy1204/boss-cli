@@ -8,7 +8,7 @@ import { runSendChatMessage } from './send.js';
 import { withBossSessionPage } from '../common/boss_session_page.js';
 import { runBossSearch, runBossSearchSet } from './deep-search.js';
 import { runNormalSearch } from './normal-search.js';
-export { parseFilterLabels, normalizeFilterLabel, defaultSearchCityFromEnv, } from './normal-search.js';
+export { parseFilterLabels, normalizeFilterLabel, parseRangeArg, expTokenToIndex, expSliderLabel, ageTokenToLabel, defaultSearchCityFromEnv, } from './normal-search.js';
 import { runRecommend } from './recommend.js';
 import { runPreview } from './preview.js';
 import { runRecommendGreet } from './greet.js';
