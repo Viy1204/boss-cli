@@ -4,12 +4,16 @@ import { ensureAppDataLayout, RESUME_OCR_DIR } from '../config.js';
 import { baiduOcrImageBase64, isBaiduOcrConfigured } from './baidu_ocr.js';
 
 /**
- * 是否对在线简历截图做 OCR。关闭：`BOSS_RESUME_OCR=0`。
+ * 是否对在线简历截图做 OCR。默认**关闭**，显式开启：`BOSS_RESUME_OCR=1`。
  * 开启时需配置百度 `API_KEY` + `SECRET_KEY`（在线识别，无本地引擎）。
+ *
+ * 默认关闭的原因：OCR 依赖第三方密钥且会外发简历截图，未配置密钥时
+ * 开启会导致 `boss preview` / 简历动作整体抛错；未配置密钥的使用者
+ * 默认拿截图即可（多模态 Agent 可直接读图）。显式 =1 才走 OCR。
  */
 export function isResumeOcrEnabled(): boolean {
   const v = process.env.BOSS_RESUME_OCR?.trim().toLowerCase();
-  return v !== '0' && v !== 'false' && v !== 'no';
+  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
 }
 
 /** 串行执行 OCR，避免并发请求交错 */
