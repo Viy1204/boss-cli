@@ -1222,11 +1222,20 @@ export async function openNormalSearchResumePreview(frame, target) {
     return opened;
 }
 /**
+ * 搜索池卡片上「开聊」按钮的文案白名单（前缀匹配）。
+ *
+ * ⚠️ 平台 2026-10 改版：按钮文案由「畅聊卡 N/M」变为「立即沟通(N/M)」，类名也由
+ * `btn-getcontact` 变为 `btn position-rights`。同卡片还有「不感兴趣」，故只能按文案
+ * 白名单挑按钮，不能取卡片里第一个 `button`——取错会把候选人标成不合适。
+ * 加了 `^` 前缀锚定：宁可漏判（报错文案会列出卡片内按钮供排查），也不误点。
+ */
+export const SEARCH_POOL_CONTACT_LABEL_PATTERN = '^(立即沟通|继续沟通|畅聊卡|畅聊|沟通)';
+/**
  * 在搜索池按「序号 / 打码姓名 / 摘要关键词」定位卡片并点「畅聊卡 N/M」按钮。
  *
  * 搜索池姓名被平台打码（`崔**`），靠姓名精确定位不可靠，因此优先支持 1-based 序号
  * （与 `boss search` 输出的编号一致，仅在同一次列表内有效）；也允许用打码姓名或摘要关键词模糊命中。
- * 按钮实测为 `button.btn.btn-getcontact.btn-chat`，文案「畅聊卡 3/13」。
+ * 按钮先按旧类名 `button.btn-getcontact` 找，找不到再按 SEARCH_POOL_CONTACT_LABEL_PATTERN 的文案兜底。
  */
 async function clickSearchPoolContactButton(frame, locator) {
     const indexLiteral = JSON.stringify(locator.index ?? null);
@@ -1268,8 +1277,14 @@ async function clickSearchPoolContactButton(frame, locator) {
 
     const name = norm(picked.querySelector(".name-label")?.textContent);
     const summary = norm(picked.querySelector(".info-detail")?.textContent).slice(0, 80);
-    const btn = picked.querySelector("button.btn-getcontact, .btn-getcontact");
-    if (!(btn instanceof HTMLElement)) return { kind: "no_btn", name };
+    // 平台 2026-10 改版：开聊按钮由 button.btn-getcontact（文案「畅聊卡 N/M」）
+    // 改为 button.btn.position-rights（文案「立即沟通(30/140)」）。先试旧类名，
+    // 再按文案兜底——同卡片另有「不感兴趣」按钮，不能盲取第一个 button。
+    const contactByText = new RegExp(${JSON.stringify(SEARCH_POOL_CONTACT_LABEL_PATTERN)});
+    const btn =
+      picked.querySelector("button.btn-getcontact, .btn-getcontact") ||
+      Array.from(picked.querySelectorAll("button")).find((el) => contactByText.test(norm(el.textContent)));
+    if (!(btn instanceof HTMLElement)) return { kind: "no_btn", name, hint: Array.from(picked.querySelectorAll("button")).map((el) => norm(el.textContent)).filter(Boolean).slice(0, 8) };
     const text = norm(btn.textContent);
     const cls = btn.className || "";
     if (/disabled|forbid|ban/i.test(cls) || btn.getAttribute("disabled") !== null) {
@@ -1380,7 +1395,7 @@ export async function greetSearchPoolOnPage(page, options) {
                 case 'ambiguous':
                     throw new Error(`关键词命中多人，请改用 --index 精确指定：\n${clicked.hits.join('\n')}`);
                 case 'no_btn':
-                    throw new Error(`候选人 ${clicked.name} 卡片上没有「畅聊」按钮。`);
+                    throw new Error(`候选人 ${clicked.name} 卡片上没有「畅聊」按钮。\n卡片内按钮：${(clicked.hint ?? []).join(' | ')}`);
                 case 'disabled':
                     throw new Error(`候选人 ${clicked.name} 的按钮不可点（${clicked.text}）。`);
                 default:

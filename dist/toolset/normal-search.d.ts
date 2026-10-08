@@ -150,6 +150,15 @@ export declare function selectNormalSearchJobHop(frame: Frame, label: string): P
  */
 export declare function selectNormalSearchMajors(frame: Frame, labels: string[]): Promise<string[]>;
 export declare function openNormalSearchResumePreview(frame: Frame, target: string): Promise<boolean>;
+/**
+ * 搜索池卡片上「开聊」按钮的文案白名单（前缀匹配）。
+ *
+ * ⚠️ 平台 2026-10 改版：按钮文案由「畅聊卡 N/M」变为「立即沟通(N/M)」，类名也由
+ * `btn-getcontact` 变为 `btn position-rights`。同卡片还有「不感兴趣」，故只能按文案
+ * 白名单挑按钮，不能取卡片里第一个 `button`——取错会把候选人标成不合适。
+ * 加了 `^` 前缀锚定：宁可漏判（报错文案会列出卡片内按钮供排查），也不误点。
+ */
+export declare const SEARCH_POOL_CONTACT_LABEL_PATTERN = "^(\u7ACB\u5373\u6C9F\u901A|\u7EE7\u7EED\u6C9F\u901A|\u7545\u804A\u5361|\u7545\u804A|\u6C9F\u901A)";
 export type SearchPoolGreetOptions = {
     /** 1-based 序号，对应上一次 `boss search` 输出的编号（仅当次列表有效） */
     index?: number;
