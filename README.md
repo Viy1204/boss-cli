@@ -92,6 +92,7 @@ npm install -g https://github.com/Viy1204/boss-cli/archive/refs/heads/main.tar.g
 | `boss recommend [岗位关键字]` | 读取推荐候选人列表 |
 | `boss search [关键词] [--job] [--city] [--degree(-range)] [--school] [--exp(-range)] [--age(-range)] [--status] [--job-hop] [--major]` | 常规搜索牛人列表，可带城市 / 学历 / 院校 / 经验 / 年龄 / 求职状态 / 跳槽频率 / 专业筛选（见下方「搜索筛选条件」） |
 | `boss greet <姓名> [--job <岗位>]` | 在当前推荐/深度搜索页对候选人打招呼（不会自动跳转） |
+| `boss greet [关键词] --index <序号> [--job <岗位>] [--dry-run]` | **搜索池**打招呼。搜索池姓名被平台打码，故先 `boss search` 再按它输出的序号打；`--index` 仅在同一次列表内有效。**消耗开聊权益或畅聊卡、不可撤回**，`--dry-run` 只走到确认弹层就取消。打完建议回 `boss list` 核对（账号权益耗尽时平台不报错，CLI 的 ✅ 不代表发出去） |
 | `boss preview <姓名>` | 在线简历预览（每日次数有限） |
 | `boss deep-search [岗位关键字] [--core <要求>] [--bonus <加分项>] [--clear-core] [--clear-bonus] [--match]` | 深度搜索表单状态；`--core` / `--bonus` 可重复，并按传入列表同步分组；`--clear-*` 清空分组；默认不输出候选列表，`--match` 输出最新 20 条 |
 | `boss positions` | 读取职位列表 |
