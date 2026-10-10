@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { SEARCH_POOL_CONTACT_LABEL_PATTERN } from '../dist/toolset/normal-search.js';
+import { SEARCH_POOL_CONTACT_LABEL_PATTERN, isChatCardDialog } from '../dist/toolset/normal-search.js';
 
 const matches = (label) => new RegExp(SEARCH_POOL_CONTACT_LABEL_PATTERN).test(label);
 
@@ -32,4 +32,24 @@ test('不能命中同卡片的其他操作按钮', () => {
 test('只认文案开头，不认出现在中间的', () => {
   assert.equal(matches('点击立即沟通'), false);
   assert.equal(matches('已沟通过'), false);
+});
+
+// 账号权益模式下卡片只显示「联系Ta」；它和畅聊卡是同一套搜索池额度，也要能点。
+test('认得出账权模式下的「联系Ta」', () => {
+  assert.equal(matches('联系Ta'), true);
+  assert.equal(matches('联系TA'), true);
+  assert.equal(matches('联系ta'), true);
+});
+
+// 两个弹层共用 .common-job-list-dialog，只能靠确认按钮文案区分：
+// 账号权益走「立即沟通」，畅聊卡走「搜索畅聊卡(N/M)」。
+// 判错就会点下「立即沟通」——账号权益耗尽时它**静默失败**（不报错也不建会话），
+// 而 CLI 还回显「已确认发出招呼」。这条判据是本次修复的核心，必须锁住。
+test('分得清畅聊卡弹层与账号权益弹层', () => {
+  assert.equal(isChatCardDialog('搜索畅聊卡(3/13)'), true);
+  assert.equal(isChatCardDialog('搜索畅聊卡 3/34'), true);
+  assert.equal(isChatCardDialog('立即沟通'), false, '账号权益弹层不能当成畅聊卡');
+  assert.equal(isChatCardDialog('立即沟通(30/140)'), false);
+  assert.equal(isChatCardDialog('取消'), false);
+  assert.equal(isChatCardDialog(''), false);
 });

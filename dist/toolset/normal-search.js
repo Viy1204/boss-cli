@@ -1228,8 +1228,12 @@ export async function openNormalSearchResumePreview(frame, target) {
  * `btn-getcontact` 变为 `btn position-rights`。同卡片还有「不感兴趣」，故只能按文案
  * 白名单挑按钮，不能取卡片里第一个 `button`——取错会把候选人标成不合适。
  * 加了 `^` 前缀锚定：宁可漏判（报错文案会列出卡片内按钮供排查），也不误点。
+ *
+ * ⚠️ 2026-10-10 补充：部分候选人卡片上没有「畅聊/立即沟通」，只显示「联系Ta」——
+ * 经用户确认，**点「联系Ta」同样走搜索畅聊卡、消耗同一份额度**，不是付费/不可用按钮，
+ * 故并入白名单（大小写用 `[Tt][Aa]` 兜住）。
  */
-export const SEARCH_POOL_CONTACT_LABEL_PATTERN = '^(立即沟通|继续沟通|畅聊卡|畅聊|沟通)';
+export const SEARCH_POOL_CONTACT_LABEL_PATTERN = '^(立即沟通|继续沟通|畅聊卡|畅聊|沟通|联系[Tt][Aa])';
 /**
  * 在搜索池按「序号 / 打码姓名 / 摘要关键词」定位卡片并点「畅聊卡 N/M」按钮。
  *
@@ -1294,6 +1298,102 @@ async function clickSearchPoolContactButton(frame, locator) {
     btn.click();
     return { kind: "clicked", index: pickedIndex + 1, name, text, summary };
   })()`));
+}
+const CHAT_MODE_WRAP_SELECTOR = '.change-chat-mode-wrap';
+const READ_CHAT_MODE_SCRIPT = `(() => {
+  const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
+  const wrap = document.querySelector(${JSON.stringify(CHAT_MODE_WRAP_SELECTOR)});
+  if (!wrap) return { present: false, current: "", options: [] };
+  const modes = Array.from(wrap.querySelectorAll(".chat-mode"));
+  const checked = modes.find((m) => (m.className || "").split(/\\s+/).indexOf("checked") !== -1);
+  return {
+    present: true,
+    current: norm(checked === undefined || checked === null ? "" : checked.textContent),
+    options: modes.map((m) => norm(m.textContent)),
+  };
+})()`;
+export async function readSearchPoolChatMode(page) {
+    return (await page.evaluate(READ_CHAT_MODE_SCRIPT));
+}
+/** 悬停详情面板的 caret，展开「选择开聊模式」浮层（`.chat-modes` 初始 display:none）。 */
+const REVEAL_CHAT_MODE_POPOVER_SCRIPT = `(() => {
+  const wrap = document.querySelector(${JSON.stringify(CHAT_MODE_WRAP_SELECTOR)});
+  if (!wrap) return false;
+  const arrow = wrap.querySelector(".arrow") || wrap;
+  ["mouseenter", "mouseover"].forEach((ev) => arrow.dispatchEvent(new MouseEvent(ev, { bubbles: true })));
+  return true;
+})()`;
+/** 点浮层里的「使用畅聊卡进行沟通」。 */
+const PICK_CHAT_CARD_MODE_SCRIPT = `(() => {
+  const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
+  const wrap = document.querySelector(${JSON.stringify(CHAT_MODE_WRAP_SELECTOR)});
+  if (!wrap) return "no-wrap";
+  const target = Array.from(wrap.querySelectorAll(".chat-mode")).find((m) => /畅聊卡/.test(norm(m.textContent)));
+  if (!target) return "no-option";
+  ["mousedown", "mouseup", "click"].forEach((ev) => target.dispatchEvent(new MouseEvent(ev, { bubbles: true })));
+  return "picked";
+})()`;
+/**
+ * 把详情面板的开聊模式切到「使用畅聊卡进行沟通」。**须先打开候选人详情**。
+ * 已是该模式则原样返回，不重复点。返回切换后的状态。
+ */
+export async function ensureSearchPoolChatCardMode(page) {
+    const before = await readSearchPoolChatMode(page);
+    if (!before.present) {
+        return before;
+    }
+    if (/畅聊卡/.test(before.current)) {
+        return before;
+    }
+    await page.evaluate(REVEAL_CHAT_MODE_POPOVER_SCRIPT);
+    await sleepRandom(240, 460);
+    const picked = (await page.evaluate(PICK_CHAT_CARD_MODE_SCRIPT));
+    if (picked !== 'picked') {
+        throw new Error(`无法切换到「使用畅聊卡进行沟通」（${picked}）。详情面板模式：${before.current || '未知'}；可选项：${before.options.join(' | ') || '无'}`);
+    }
+    await sleepRandom(240, 460);
+    return readSearchPoolChatMode(page);
+}
+/** 点开某张卡片的简历详情（右侧面板），返回该候选人打码姓名。 */
+async function openSearchPoolCardDetail(frame, locator) {
+    const indexLiteral = JSON.stringify(locator.index ?? null);
+    const targetLiteral = JSON.stringify((locator.target ?? '').trim());
+    const opened = (await frame.evaluate(`(() => {
+    const wantIndex = ${indexLiteral};
+    const raw = ${targetLiteral};
+    const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
+    const loose = (v) => norm(v).replace(/[*＊\\s]/g, "").toLowerCase();
+    const cards = Array.from(document.querySelectorAll(".geek-info-card"));
+    if (cards.length === 0) return "";
+    let picked = null;
+    if (wantIndex !== null) {
+      if (wantIndex < 1 || wantIndex > cards.length) return "";
+      picked = cards[wantIndex - 1];
+    } else {
+      const key = loose(raw);
+      const hits = cards.filter((card) =>
+        loose(card.querySelector(".name-label")?.textContent).includes(key) ||
+        loose(card.querySelector(".info-detail")?.textContent).includes(key));
+      if (hits.length !== 1) return "";
+      picked = hits[0];
+    }
+    const t = picked.querySelector(".name-label") || picked;
+    ["mousedown", "mouseup", "click"].forEach((ev) => t.dispatchEvent(new MouseEvent(ev, { bubbles: true })));
+    return norm(picked.querySelector(".name-label")?.textContent);
+  })()`));
+    if (!opened) {
+        throw new Error('未能打开候选人详情面板（姓名打码定位失败或卡片不存在）。');
+    }
+    await sleepRandom(1200, 1800);
+    return opened;
+}
+/**
+ * 账号权益弹层「使用VVIP账号沟通权益联系牛人」的确认按钮是「立即沟通」，
+ * 与畅聊卡弹层的「搜索畅聊卡(N/M)」区分开——只有后者才真的走畅聊卡。
+ * 导出是为了让测试锁住这条判据：判错就会退回「静默失败」那个坑。
+ */
+export function isChatCardDialog(label) {
+    return /畅聊卡/.test(label);
 }
 async function readNormalSearchCandidates(frame) {
     return (await frame.evaluate(`(() => {
@@ -1402,11 +1502,34 @@ export async function greetSearchPoolOnPage(page, options) {
                     break;
             }
             const head = `目标：#${clicked.index} ${clicked.name}｜按钮：${clicked.text}`;
-            const dialog = await waitForGreetCardDialog(page, GREET_CARD_DIALOG_WAIT_MS);
+            let dialog = await waitForGreetCardDialog(page, GREET_CARD_DIALOG_WAIT_MS);
+            const modeNotes = [];
+            /**
+             * 两个弹层共用 `.common-job-list-dialog`，靠确认按钮文案区分：
+             * 账号权益走「使用VVIP账号沟通权益联系牛人」+ 确认「立即沟通」；
+             * 畅聊卡走「选择该牛人开聊职位」+ 确认「搜索畅聊卡(N/M)」。
+             * 账号权益耗尽后前者确认**静默失败**（不报错也不建会话），所以必须切到畅聊卡。
+             * 模式是全局且持久的，切一次之后列表卡按钮会从「联系Ta」变成「畅聊卡 N/M」。
+             */
+            if (dialog.present && !isChatCardDialog(dialog.confirmLabel)) {
+                await cancelGreetCardDialog(page);
+                modeNotes.push(`⚠️ 首次点开的是「${dialog.title || '账号权益'}」弹层（确认按钮「${dialog.confirmLabel}」）——不走畅聊卡，账号权益耗尽时确认会静默失败。`);
+                await openSearchPoolCardDetail(frame, { index, target });
+                const mode = await ensureSearchPoolChatCardMode(page);
+                modeNotes.push(`→ 已在详情面板把开聊模式切为：「${mode.current}」，重试一次。`);
+                const retried = await clickSearchPoolContactButton(frame, { index, target });
+                if (retried.kind === 'clicked') {
+                    dialog = await waitForGreetCardDialog(page, GREET_CARD_DIALOG_WAIT_MS);
+                }
+                else {
+                    modeNotes.push(`⚠️ 重试时未能点到按钮（${retried.kind}），请人工确认。`);
+                }
+            }
             if (!dialog.present) {
                 return [
                     head,
-                    '⚠️ 点击后未出现「搜索畅聊卡」确认弹层。可能是平台改版、风控拦截，或该卡片无需确认。',
+                    ...modeNotes,
+                    '⚠️ 点击后未出现确认弹层。可能是平台改版、风控拦截，或该卡片无需确认。',
                     '未做进一步操作。请人工在浏览器确认当前状态。',
                 ].join('\n');
             }
@@ -1415,7 +1538,7 @@ export async function greetSearchPoolOnPage(page, options) {
                 switched = await selectGreetCardDialogJob(page, jobKeyword.trim());
             }
             const state = await readGreetCardDialog(page);
-            const lines = [head, '', renderGreetCardDialog(state)];
+            const lines = [head, ...modeNotes, '', renderGreetCardDialog(state)];
             if (switched) {
                 lines.push(`（已在弹层内切换职位为：${switched}）`);
             }
