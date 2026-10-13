@@ -34,7 +34,7 @@ test('只认文案开头，不认出现在中间的', () => {
   assert.equal(matches('已沟通过'), false);
 });
 
-// 账号权益模式下卡片只显示「联系Ta」；它和畅聊卡是同一套搜索池额度，也要能点。
+// 账号权益模式下卡片只显示「联系Ta」；实际凭据要看模式和弹层，也要能定位。
 test('认得出账权模式下的「联系Ta」', () => {
   assert.equal(matches('联系Ta'), true);
   assert.equal(matches('联系TA'), true);

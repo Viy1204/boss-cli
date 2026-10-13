@@ -26,7 +26,7 @@ const READ_DIALOG_SCRIPT = `(() => {
     return r.width > 40 && r.height > 40;
   };
   const dlg = Array.from(document.querySelectorAll(${JSON.stringify(DIALOG_ROOT_SELECTOR)})).find(isVisible);
-  if (!dlg) return { present: false, title: "", jobs: [], activeJob: "", confirmLabel: "", cancelLabel: "" };
+  if (!dlg) return { present: false, title: "", jobs: [], activeJob: "", confirmLabel: "", cancelLabel: "", text: "", confirmDisabled: true };
   const jobs = Array.from(dlg.querySelectorAll(".select-list li")).map((li, i) => ({
     index: i + 1,
     name: norm(li.querySelector("h3")?.textContent),
@@ -44,6 +44,8 @@ const READ_DIALOG_SCRIPT = `(() => {
     activeJob: (jobs.find((j) => j.active) || {}).name || "",
     confirmLabel: norm(confirm?.textContent),
     cancelLabel: norm(cancel?.textContent),
+    text: (dlg.innerText ?? "").trim(),
+    confirmDisabled: !confirm || confirm.disabled || confirm.getAttribute("aria-disabled") === "true" || /disabled|forbid|ban/i.test(confirm.className || ""),
   };
 })()`;
 export async function readGreetCardDialog(page) {
@@ -54,7 +56,7 @@ export async function readGreetCardDialog(page) {
  * 只判 `present` 会读到半成品（jobs 为空、按钮读不到，连「取消」都点不着），所以要等内容齐。
  */
 function isDialogReady(state) {
-    return state.present && state.confirmLabel.length > 0 && state.jobs.length > 0;
+    return state.present && state.confirmLabel.length > 0 && (state.jobs.length > 0 || state.confirmDisabled);
 }
 /** 轮询等待弹层出现并渲染完；超时返回最后一次读到的状态。 */
 export async function waitForGreetCardDialog(page, timeoutMs) {
@@ -81,7 +83,12 @@ export async function selectGreetCardDialogJob(page, keyword) {
     const picked = (await page.evaluate(`(() => {
     const kw = ${kwLiteral};
     const norm = (v) => (v ?? "").replace(/\\s+/g, "").trim().toLowerCase();
-    const dlg = document.querySelector(${JSON.stringify(DIALOG_ROOT_SELECTOR)});
+    const dlg = Array.from(document.querySelectorAll(${JSON.stringify(DIALOG_ROOT_SELECTOR)})).find(el => {
+      if (!(el instanceof HTMLElement)) return false;
+      const st = window.getComputedStyle(el);
+      const r = el.getBoundingClientRect();
+      return st.display !== "none" && st.visibility !== "hidden" && Number(st.opacity) >= 0.05 && r.width > 40 && r.height > 40;
+    });
     if (!dlg) return null;
     const li = Array.from(dlg.querySelectorAll(".select-list li"))
       .find((el) => norm(el.querySelector("h3")?.textContent).includes(norm(kw)));
@@ -105,7 +112,12 @@ export async function cancelGreetCardDialog(page, timeoutMs = 5_000) {
     for (;;) {
         const clicked = (await page.evaluate(`(() => {
       const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
-      const dlg = document.querySelector(${JSON.stringify(DIALOG_ROOT_SELECTOR)});
+      const dlg = Array.from(document.querySelectorAll(${JSON.stringify(DIALOG_ROOT_SELECTOR)})).find(el => {
+      if (!(el instanceof HTMLElement)) return false;
+      const st = window.getComputedStyle(el);
+      const r = el.getBoundingClientRect();
+      return st.display !== "none" && st.visibility !== "hidden" && Number(st.opacity) >= 0.05 && r.width > 40 && r.height > 40;
+    });
       if (!dlg) return "gone";
       const btn = Array.from(dlg.querySelectorAll("button"))
         .find((b) => (b.className || "").includes("boss-btn-outline") || norm(b.textContent) === "取消");
@@ -131,13 +143,27 @@ export async function cancelGreetCardDialog(page, timeoutMs = 5_000) {
  * 点确认按钮（`button.boss-btn-primary`，文案「搜索畅聊卡(N/M)」）真正发出招呼。
  * ⚠️ 不可逆：会消耗一张搜索畅聊卡。仅在调用方已明确要发起沟通时调用。
  */
-export async function confirmGreetCardDialog(page) {
+export async function confirmGreetCardDialog(page, expected) {
     const clicked = (await page.evaluate(`(() => {
-    const dlg = document.querySelector(${JSON.stringify(DIALOG_ROOT_SELECTOR)});
+    const dlg = Array.from(document.querySelectorAll(${JSON.stringify(DIALOG_ROOT_SELECTOR)})).find(el => {
+      if (!(el instanceof HTMLElement)) return false;
+      const st = window.getComputedStyle(el);
+      const r = el.getBoundingClientRect();
+      return st.display !== "none" && st.visibility !== "hidden" && Number(st.opacity) >= 0.05 && r.width > 40 && r.height > 40;
+    });
     if (!dlg) return false;
     const btn = Array.from(dlg.querySelectorAll("button"))
       .find((b) => (b.className || "").includes("boss-btn-primary"));
-    if (!(btn instanceof HTMLElement)) return false;
+    if (!(btn instanceof HTMLElement) || btn.disabled || btn.getAttribute("aria-disabled") === "true"
+      || /disabled|forbid|ban/i.test(btn.className || "")) return false;
+    const expected = ${JSON.stringify(expected ?? null)};
+    if (expected) {
+      const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
+      if (norm(btn.textContent) !== expected.confirmLabel
+        || norm(dlg.querySelector("h3")?.textContent) !== expected.title
+        || norm(dlg.querySelector(".select-list li.active h3")?.textContent) !== expected.activeJob
+        || norm(dlg.innerText) !== norm(expected.text)) return false;
+    }
     btn.click();
     return true;
   })()`));

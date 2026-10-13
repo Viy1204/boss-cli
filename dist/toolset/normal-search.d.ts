@@ -1,4 +1,5 @@
 import type { Frame, Page } from 'puppeteer-core';
+import { type GreetCardDialogState } from '../common/boss_greet_card_dialog.js';
 /**
  * 默认搜索城市。**不硬编码深圳**——这个包是公开发布的，别人不一定在深圳；
  * 不设这个变量时完全不碰城市控件，行为与加本功能之前一致。
@@ -159,7 +160,7 @@ export declare function openNormalSearchResumePreview(frame: Frame, target: stri
  * 加了 `^` 前缀锚定：宁可漏判（报错文案会列出卡片内按钮供排查），也不误点。
  *
  * ⚠️ 2026-10-10 补充：部分候选人卡片上没有「畅聊/立即沟通」，只显示「联系Ta」——
- * 经用户确认，**点「联系Ta」同样走搜索畅聊卡、消耗同一份额度**，不是付费/不可用按钮，
+ * 「联系Ta」只表示开聊入口，实际凭据须由模式和确认弹层验证，
  * 故并入白名单（大小写用 `[Tt][Aa]` 兜住）。
  */
 export declare const SEARCH_POOL_CONTACT_LABEL_PATTERN = "^(\u7ACB\u5373\u6C9F\u901A|\u7EE7\u7EED\u6C9F\u901A|\u7545\u804A\u5361|\u7545\u804A|\u6C9F\u901A|\u8054\u7CFB[Tt][Aa])";
@@ -167,8 +168,8 @@ export declare const SEARCH_POOL_CONTACT_LABEL_PATTERN = "^(\u7ACB\u5373\u6C9F\u
  * 候选人详情面板（右侧）里「选择开聊模式」的当前值。
  *
  * 平台有两套开聊凭据：**账号权益**（VVIP）与**畅聊卡**。默认走账号权益；
- * 账号权益用完后点「联系Ta」会弹「使用VVIP账号沟通权益联系牛人」，确认后**静默失败**
- * （不报错、也不建会话）。必须先在详情面板把模式切到「使用畅聊卡进行沟通」。
+ * 账号权益弹层不证明耗尽；只有明确不足才允许切卡。
+ * 无明确失败证据时不补发，避免重复发送。
  * ⚠️ 该模式是**全局且持久**的——切一次之后列表卡按钮会从「联系Ta」变成「畅聊卡 N/M」。
  */
 export type SearchPoolChatModeState = {
@@ -179,16 +180,20 @@ export type SearchPoolChatModeState = {
 };
 export declare function readSearchPoolChatMode(page: Page): Promise<SearchPoolChatModeState>;
 /**
- * 把详情面板的开聊模式切到「使用畅聊卡进行沟通」。**须先打开候选人详情**。
+ * 验证详情面板开聊模式；须先打开候选人详情。
  * 已是该模式则原样返回，不重复点。返回切换后的状态。
  */
+export declare function ensureSearchPoolChatMode(page: Page, mode: 'account' | 'card'): Promise<SearchPoolChatModeState>;
+/** 既有入口；调用方必须先确认账号权益明确不足。 */
 export declare function ensureSearchPoolChatCardMode(page: Page): Promise<SearchPoolChatModeState>;
 /**
  * 账号权益弹层「使用VVIP账号沟通权益联系牛人」的确认按钮是「立即沟通」，
  * 与畅聊卡弹层的「搜索畅聊卡(N/M)」区分开——只有后者才真的走畅聊卡。
- * 导出是为了让测试锁住这条判据：判错就会退回「静默失败」那个坑。
+ * 仅用于识别按钮类型，不能据此判断账号权益是否耗尽。
  */
 export declare function isChatCardDialog(label: string): boolean;
+/** 标题不是耗尽证据；只接受当前弹层明确不足且确认不可用。 */
+export declare function searchPoolDialogFunding(state: GreetCardDialogState): 'account' | 'exhausted' | 'card' | 'unknown';
 export type SearchPoolGreetOptions = {
     /** 1-based 序号，对应上一次 `boss search` 输出的编号（仅当次列表有效） */
     index?: number;

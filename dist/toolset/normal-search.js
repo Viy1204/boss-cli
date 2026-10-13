@@ -1230,7 +1230,7 @@ export async function openNormalSearchResumePreview(frame, target) {
  * 加了 `^` 前缀锚定：宁可漏判（报错文案会列出卡片内按钮供排查），也不误点。
  *
  * ⚠️ 2026-10-10 补充：部分候选人卡片上没有「畅聊/立即沟通」，只显示「联系Ta」——
- * 经用户确认，**点「联系Ta」同样走搜索畅聊卡、消耗同一份额度**，不是付费/不可用按钮，
+ * 「联系Ta」只表示开聊入口，实际凭据须由模式和确认弹层验证，
  * 故并入白名单（大小写用 `[Tt][Aa]` 兜住）。
  */
 export const SEARCH_POOL_CONTACT_LABEL_PATTERN = '^(立即沟通|继续沟通|畅聊卡|畅聊|沟通|联系[Tt][Aa])';
@@ -1323,36 +1323,48 @@ const REVEAL_CHAT_MODE_POPOVER_SCRIPT = `(() => {
   ["mouseenter", "mouseover"].forEach((ev) => arrow.dispatchEvent(new MouseEvent(ev, { bubbles: true })));
   return true;
 })()`;
-/** 点浮层里的「使用畅聊卡进行沟通」。 */
-const PICK_CHAT_CARD_MODE_SCRIPT = `(() => {
+/** 按明确文案选择账号权益或畅聊卡模式。 */
+function pickChatModeScript(mode) {
+    const pattern = mode === 'card' ? '^使用畅聊卡进行沟通$' : '^使用(?:VVIP)?账号权益进行沟通$';
+    return `(() => {
   const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
   const wrap = document.querySelector(${JSON.stringify(CHAT_MODE_WRAP_SELECTOR)});
   if (!wrap) return "no-wrap";
-  const target = Array.from(wrap.querySelectorAll(".chat-mode")).find((m) => /畅聊卡/.test(norm(m.textContent)));
+  const target = Array.from(wrap.querySelectorAll(".chat-mode")).find((m) => new RegExp(${JSON.stringify(pattern)}).test(norm(m.textContent)));
   if (!target) return "no-option";
   ["mousedown", "mouseup", "click"].forEach((ev) => target.dispatchEvent(new MouseEvent(ev, { bubbles: true })));
   return "picked";
 })()`;
+}
 /**
- * 把详情面板的开聊模式切到「使用畅聊卡进行沟通」。**须先打开候选人详情**。
+ * 验证详情面板开聊模式；须先打开候选人详情。
  * 已是该模式则原样返回，不重复点。返回切换后的状态。
  */
-export async function ensureSearchPoolChatCardMode(page) {
+export async function ensureSearchPoolChatMode(page, mode) {
+    const pattern = mode === 'card' ? '^使用畅聊卡进行沟通$' : '^使用(?:VVIP)?账号权益进行沟通$';
+    const matches = (text) => new RegExp(pattern).test(text);
     const before = await readSearchPoolChatMode(page);
-    if (!before.present) {
+    if (!before.present || !before.current)
+        throw new Error('无法识别详情面板当前开聊模式；停止操作。');
+    if (matches(before.current))
         return before;
-    }
-    if (/畅聊卡/.test(before.current)) {
-        return before;
-    }
     await page.evaluate(REVEAL_CHAT_MODE_POPOVER_SCRIPT);
     await sleepRandom(240, 460);
-    const picked = (await page.evaluate(PICK_CHAT_CARD_MODE_SCRIPT));
-    if (picked !== 'picked') {
-        throw new Error(`无法切换到「使用畅聊卡进行沟通」（${picked}）。详情面板模式：${before.current || '未知'}；可选项：${before.options.join(' | ') || '无'}`);
-    }
-    await sleepRandom(240, 460);
-    return readSearchPoolChatMode(page);
+    const picked = await page.evaluate(pickChatModeScript(mode));
+    if (picked !== 'picked')
+        throw new Error(`无法切换开聊模式（${picked}）；当前：${before.current}；可选：${before.options.join(' | ')}`);
+    await page.waitForFunction(`(() => {
+    const checked = document.querySelector(${JSON.stringify(CHAT_MODE_WRAP_SELECTOR)})?.querySelector(".chat-mode.checked");
+    return new RegExp(${JSON.stringify(pattern)}).test((checked?.textContent ?? "").replace(/\\s+/g, " ").trim());
+  })()`, { timeout: 5000 });
+    const after = await readSearchPoolChatMode(page);
+    if (!after.present || !matches(after.current))
+        throw new Error('开聊模式切换未生效；停止操作。');
+    return after;
+}
+/** 既有入口；调用方必须先确认账号权益明确不足。 */
+export async function ensureSearchPoolChatCardMode(page) {
+    return ensureSearchPoolChatMode(page, 'card');
 }
 /** 点开某张卡片的简历详情（右侧面板），返回该候选人打码姓名。 */
 async function openSearchPoolCardDetail(frame, locator) {
@@ -1390,10 +1402,25 @@ async function openSearchPoolCardDetail(frame, locator) {
 /**
  * 账号权益弹层「使用VVIP账号沟通权益联系牛人」的确认按钮是「立即沟通」，
  * 与畅聊卡弹层的「搜索畅聊卡(N/M)」区分开——只有后者才真的走畅聊卡。
- * 导出是为了让测试锁住这条判据：判错就会退回「静默失败」那个坑。
+ * 仅用于识别按钮类型，不能据此判断账号权益是否耗尽。
  */
 export function isChatCardDialog(label) {
     return /畅聊卡/.test(label);
+}
+/** 标题不是耗尽证据；只接受当前弹层明确不足且确认不可用。 */
+export function searchPoolDialogFunding(state) {
+    if (!state.present)
+        return 'unknown';
+    if (state.title === '选择该牛人开聊职位' && /^搜索畅聊卡(?:[（(]\d+\/\d+[）)]| \d+\/\d+)$/.test(state.confirmLabel))
+        return state.confirmDisabled ? 'unknown' : 'card';
+    if (state.title !== '使用VVIP账号沟通权益联系牛人' || state.confirmLabel !== '立即沟通')
+        return 'unknown';
+    const exhausted = /^\s*(?:VVIP)?账号(?:沟通)?权益(?:已耗尽|已用完|不足)[。！!；;]?\s*$/m.test(state.text);
+    if (state.confirmDisabled && exhausted)
+        return 'exhausted';
+    if (state.confirmDisabled || exhausted)
+        return 'unknown';
+    return 'account';
 }
 async function readNormalSearchCandidates(frame) {
     return (await frame.evaluate(`(() => {
@@ -1484,9 +1511,17 @@ export async function greetSearchPoolOnPage(page, options) {
             const frame = await assertNormalSearchPageReadyForPreview(page);
             // 上一次跑残留的弹层会挡住卡片点击，先收干净
             if ((await readGreetCardDialog(page)).present) {
-                await cancelGreetCardDialog(page);
+                if (!(await cancelGreetCardDialog(page)) || (await readGreetCardDialog(page)).present) {
+                    throw new Error('无法关闭残留弹层；未点击候选人。');
+                }
             }
-            const clicked = await clickSearchPoolContactButton(frame, { index, target });
+            // dry-run 只预览当前模式，不能修改全局持久选择。
+            let candidateName = '';
+            if (!dryRun) {
+                candidateName = await openSearchPoolCardDetail(frame, { index, target });
+                await ensureSearchPoolChatMode(page, 'account');
+            }
+            const clicked = await clickSearchPoolContactButton(frame, candidateName ? { target: candidateName } : { index, target });
             switch (clicked.kind) {
                 case 'empty':
                     throw new Error('搜索池列表为空，无法打招呼。请先执行 boss search。');
@@ -1501,34 +1536,13 @@ export async function greetSearchPoolOnPage(page, options) {
                 default:
                     break;
             }
+            if (candidateName && clicked.name !== candidateName)
+                throw new Error('候选人列表已变化；未确认。');
             const head = `目标：#${clicked.index} ${clicked.name}｜按钮：${clicked.text}`;
             let dialog = await waitForGreetCardDialog(page, GREET_CARD_DIALOG_WAIT_MS);
-            const modeNotes = [];
-            /**
-             * 两个弹层共用 `.common-job-list-dialog`，靠确认按钮文案区分：
-             * 账号权益走「使用VVIP账号沟通权益联系牛人」+ 确认「立即沟通」；
-             * 畅聊卡走「选择该牛人开聊职位」+ 确认「搜索畅聊卡(N/M)」。
-             * 账号权益耗尽后前者确认**静默失败**（不报错也不建会话），所以必须切到畅聊卡。
-             * 模式是全局且持久的，切一次之后列表卡按钮会从「联系Ta」变成「畅聊卡 N/M」。
-             */
-            if (dialog.present && !isChatCardDialog(dialog.confirmLabel)) {
-                await cancelGreetCardDialog(page);
-                modeNotes.push(`⚠️ 首次点开的是「${dialog.title || '账号权益'}」弹层（确认按钮「${dialog.confirmLabel}」）——不走畅聊卡，账号权益耗尽时确认会静默失败。`);
-                await openSearchPoolCardDetail(frame, { index, target });
-                const mode = await ensureSearchPoolChatCardMode(page);
-                modeNotes.push(`→ 已在详情面板把开聊模式切为：「${mode.current}」，重试一次。`);
-                const retried = await clickSearchPoolContactButton(frame, { index, target });
-                if (retried.kind === 'clicked') {
-                    dialog = await waitForGreetCardDialog(page, GREET_CARD_DIALOG_WAIT_MS);
-                }
-                else {
-                    modeNotes.push(`⚠️ 重试时未能点到按钮（${retried.kind}），请人工确认。`);
-                }
-            }
             if (!dialog.present) {
                 return [
                     head,
-                    ...modeNotes,
                     '⚠️ 点击后未出现确认弹层。可能是平台改版、风控拦截，或该卡片无需确认。',
                     '未做进一步操作。请人工在浏览器确认当前状态。',
                 ].join('\n');
@@ -1538,27 +1552,54 @@ export async function greetSearchPoolOnPage(page, options) {
                 switched = await selectGreetCardDialogJob(page, jobKeyword.trim());
             }
             const state = await readGreetCardDialog(page);
-            const lines = [head, ...modeNotes, '', renderGreetCardDialog(state)];
+            const lines = [head, '', renderGreetCardDialog(state)];
             if (switched) {
                 lines.push(`（已在弹层内切换职位为：${switched}）`);
             }
             if (dryRun) {
                 const cancelled = await cancelGreetCardDialog(page);
                 lines.push('', cancelled
-                    ? '✅ dry-run：已点「取消」关闭弹层，未发出招呼、未消耗畅聊卡。'
+                    ? 'dry-run：已取消弹层，未确认招呼、未修改持久开聊模式。'
                     : '⚠️ dry-run：未找到「取消」按钮，弹层可能仍开着，请人工确认。');
                 return lines.join('\n');
             }
-            const confirmed = await confirmGreetCardDialog(page);
+            let funding = searchPoolDialogFunding(state);
+            if (funding === 'exhausted') {
+                if (!(await cancelGreetCardDialog(page)) || (await readGreetCardDialog(page)).present)
+                    throw new Error('权益不足但无法关闭弹层；未切卡、未重试。');
+                await ensureSearchPoolChatMode(page, 'card');
+                const retried = await clickSearchPoolContactButton(frame, { target: candidateName });
+                if (retried.kind !== 'clicked' || retried.name !== candidateName)
+                    throw new Error('切卡后候选人定位失败；未确认、未继续重试。');
+                dialog = await waitForGreetCardDialog(page, GREET_CARD_DIALOG_WAIT_MS);
+                if ((jobKeyword ?? '').trim())
+                    await selectGreetCardDialogJob(page, jobKeyword.trim());
+                Object.assign(state, await readGreetCardDialog(page));
+                funding = searchPoolDialogFunding(state);
+                if (funding !== 'card') {
+                    await cancelGreetCardDialog(page);
+                    throw new Error(`切卡后未得到可用畅聊卡弹层（${state.title} / ${state.confirmLabel}）；未确认、未继续重试。`);
+                }
+                lines.push('账号权益明确不足且确认不可用；已验证切卡模式和新弹层。', renderGreetCardDialog(state));
+            }
+            else if (funding !== 'account') {
+                await cancelGreetCardDialog(page);
+                throw new Error(`无法可靠确认账号权益状态（${state.title} / ${state.confirmLabel}）；未确认、未切卡、未重试。`);
+            }
+            if (!state.activeJob || !state.jobs.some(j => j.active && j.name === state.activeJob)) {
+                await cancelGreetCardDialog(page);
+                throw new Error('没有可验证的已选职位；未确认。');
+            }
+            const confirmed = await confirmGreetCardDialog(page, state);
             if (!confirmed) {
                 await cancelGreetCardDialog(page);
-                throw new Error('未找到弹层确认按钮（button.boss-btn-primary），已尝试取消。');
+                throw new Error('确认按钮不可用或弹层状态已变化，已尝试取消；未重试。');
             }
             await sleepRandom(600, 1200);
             const after = await readGreetCardDialog(page);
             lines.push('', after.present
-                ? '⚠️ 已点确认，但弹层仍在，请人工确认是否发出。'
-                : `✅ 已确认发出招呼（消耗一张搜索畅聊卡；点击前额度显示：${state.confirmLabel}）。`);
+                ? '已点击确认但弹层仍在；发送结果未确认，未自动补发。'
+                : `已提交${funding === 'account' ? '账号权益' : '畅聊卡'}确认（${state.confirmLabel}）；弹层已关闭，发送和实际扣费结果未确认，未自动补发。`);
             return lines.join('\n');
         }
     }

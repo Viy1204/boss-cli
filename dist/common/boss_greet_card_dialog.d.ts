@@ -13,6 +13,9 @@ export type GreetCardDialogState = {
     /** 确认按钮文案，形如「搜索畅聊卡(3/13)」 */
     confirmLabel: string;
     cancelLabel: string;
+    /** 当前可见弹层全文，用于明确的权益不足提示。 */
+    text: string;
+    confirmDisabled: boolean;
 };
 export declare function readGreetCardDialog(page: Page): Promise<GreetCardDialogState>;
 /** 轮询等待弹层出现并渲染完；超时返回最后一次读到的状态。 */
@@ -28,6 +31,6 @@ export declare function cancelGreetCardDialog(page: Page, timeoutMs?: number): P
  * 点确认按钮（`button.boss-btn-primary`，文案「搜索畅聊卡(N/M)」）真正发出招呼。
  * ⚠️ 不可逆：会消耗一张搜索畅聊卡。仅在调用方已明确要发起沟通时调用。
  */
-export declare function confirmGreetCardDialog(page: Page): Promise<boolean>;
+export declare function confirmGreetCardDialog(page: Page, expected?: GreetCardDialogState): Promise<boolean>;
 export declare function renderGreetCardDialog(state: GreetCardDialogState): string;
 //# sourceMappingURL=boss_greet_card_dialog.d.ts.map
