@@ -414,7 +414,6 @@ export async function selectNormalSearchCity(frame, city) {
     }
   })()`);
     await sleepRandom(CITY_SETTLE_MS.min, CITY_SETTLE_MS.max);
-    await input.click();
     await input.type(target, { delay: 90 });
     /**
      * 联想列表是异步拉的，**必须等它出现再读**——早先用固定 sleep 等，

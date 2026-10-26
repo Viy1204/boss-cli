@@ -491,7 +491,6 @@ export async function selectNormalSearchCity(frame: Frame, city: string): Promis
     }
   })()`);
   await sleepRandom(CITY_SETTLE_MS.min, CITY_SETTLE_MS.max);
-  await input.click();
   await input.type(target, { delay: 90 });
 
   /**
