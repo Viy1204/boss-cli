@@ -6,6 +6,7 @@ import type { Page } from 'puppeteer-core';
 type BossSessionPageOptions = {
     ensureChatShell?: boolean;
     ensureMenuList?: boolean;
+    retryOnContextDestroyed?: boolean;
 };
 /**
  * 先按 URL 判断：不在 Boss 已登录主壳页（`/web/chat/*`）时跳到沟通页 `/web/chat/index`，
@@ -17,6 +18,12 @@ type BossSessionPageOptions = {
 export declare class BossPageRiskError extends Error {
     constructor(message: string);
 }
+/**
+ * 熔断后立刻停下：继续自动操作既拿不到正确页面，也会让风控进一步升级。
+ * 错误信息直接给出人工处置动作。
+ */
+export declare function assertNoPageRisk(page: Page): void;
+export declare function ensureMenuListMountedAfterLoad(page: Page): Promise<void>;
 /**
  * 在已连接浏览器、且当前页为 Boss 主壳（含侧栏 `.menu-list`）的前提下执行回调。
  * 默认会先按 URL 确保落在 `/web/chat/*` 主壳页（已在主壳子页则保留原路径，否则跳回沟通页 `/web/chat/index`），

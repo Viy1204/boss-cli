@@ -49,7 +49,7 @@ export async function clickBossSidebarMenuToPath(page, menuLabel, targetPath) {
     await sleepRandom(SIDEBAR_NAV_AFTER_CLICK_MS.min, SIDEBAR_NAV_AFTER_CLICK_MS.max);
     const pathReached = buildPathReachedPredicate(targetPath);
     try {
-        await page.waitForFunction(pathReached, { timeout: SIDEBAR_CLICK_NAV_WAIT_MS });
+        await page.waitForFunction(pathReached, { timeout: SIDEBAR_CLICK_NAV_WAIT_MS, polling: 100 });
         return;
     }
     catch {
@@ -57,6 +57,6 @@ export async function clickBossSidebarMenuToPath(page, menuLabel, targetPath) {
     }
     const targetUrl = new URL(targetPath, page.url()).toString();
     await page.goto(targetUrl, { waitUntil: 'load', timeout: 60_000 });
-    await page.waitForFunction(pathReached, { timeout: SIDEBAR_NAV_WAIT_MS });
+    await page.waitForFunction(pathReached, { timeout: SIDEBAR_NAV_WAIT_MS, polling: 100 });
 }
 //# sourceMappingURL=boss_sidebar_nav.js.map

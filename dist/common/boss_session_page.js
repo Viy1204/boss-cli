@@ -69,7 +69,7 @@ export class BossPageRiskError extends Error {
  * 熔断后立刻停下：继续自动操作既拿不到正确页面，也会让风控进一步升级。
  * 错误信息直接给出人工处置动作。
  */
-function assertNoPageRisk(page) {
+export function assertNoPageRisk(page) {
     const risk = getBossPageRiskState(page);
     if (!risk)
         return;
@@ -82,10 +82,10 @@ async function ensureBossChatShellUrlBeforeMenuList(page) {
     }
     await page.goto(BOSS_CHAT_INDEX_URL, { waitUntil: 'load', timeout: 60_000 });
 }
-async function ensureMenuListMountedAfterLoad(page) {
-    await page.waitForFunction(`(() => document.readyState === "complete" || document.readyState === "interactive")()`, { timeout: 12_000 });
+export async function ensureMenuListMountedAfterLoad(page) {
+    await page.waitForFunction(`(() => document.readyState === "complete" || document.readyState === "interactive")()`, { timeout: 12_000, polling: 100 });
     try {
-        await page.waitForFunction(`(() => !!document.querySelector(".menu-list"))()`, { timeout: MENU_LIST_MOUNT_TIMEOUT_MS });
+        await page.waitForFunction(`(() => !!document.querySelector(".menu-list"))()`, { timeout: MENU_LIST_MOUNT_TIMEOUT_MS, polling: 100 });
     }
     catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));
@@ -118,7 +118,7 @@ export async function withBossSessionPage(callback, options = {}) {
                 msg.includes('Cannot find context with specified id') ||
                 msg.includes('Most likely because of a navigation'));
         };
-        const maxAttempts = 2;
+        const maxAttempts = options.retryOnContextDestroyed === false ? 1 : 2;
         let lastErr;
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
             let page = null;

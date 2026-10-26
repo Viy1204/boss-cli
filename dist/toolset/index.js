@@ -9,6 +9,7 @@ import { withBossSessionPage } from '../common/boss_session_page.js';
 import { runBossSearch, runBossSearchSet } from './deep-search.js';
 import { runNormalSearch } from './normal-search.js';
 export { parseFilterLabels, normalizeFilterLabel, parseRangeArg, expTokenToIndex, degreeTokenToIndex, degreeSliderLabel, expSliderLabel, ageTokenToLabel, defaultSearchCityFromEnv, } from './normal-search.js';
+export { runReload } from './reload.js';
 import { runRecommend } from './recommend.js';
 import { runPreview } from './preview.js';
 import { runRecommendGreet } from './greet.js';

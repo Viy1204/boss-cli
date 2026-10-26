@@ -5,7 +5,7 @@
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { closeRemoteBrowser, detachBrowserSession, probeRemoteHeadless, REMOTE_DEBUGGING_PORT, resolveHeadlessFromEnv, } from '../browser/index.js';
-import { implChatAction, implLogin, implListCandidates, implListUnreadCandidates, implOpenChatByIndex, implListPositions, implListPositionsWithOptions, implNormalSearch, parseFilterLabels, implOpenChat, implRecommend, implPreview, implRecommendGreet, implSetBaiduCredentials, implBossSearch, implSendMessage, } from '../toolset/index.js';
+import { implChatAction, implLogin, implListCandidates, implListUnreadCandidates, implOpenChatByIndex, implListPositions, implListPositionsWithOptions, implNormalSearch, runReload, parseFilterLabels, implOpenChat, implRecommend, implPreview, implRecommendGreet, implSetBaiduCredentials, implBossSearch, implSendMessage, } from '../toolset/index.js';
 import { printBossInteractiveBanner } from './banner.js';
 import { printPackageUpdateNoticeIfDue, printVersionInfo, runPackageUpdate, } from './version.js';
 import { acquireBusyLock, releaseBusyLock } from '../common/busy_lock.js';
@@ -114,6 +114,9 @@ function printHelp() {
   boss shutdown
       关掉常驻的浏览器（登录态保留，下条命令会自动重新拉起）
       浏览器默认有头（真窗口）且跨命令常驻；无头有账号被限风险，别设 RECRUIT_BROWSER_HIDDEN=true
+  boss reload
+      刷新当前已登录的 Boss 主壳页并等待侧栏就绪；旧搜索快照失效，需重新执行原只读命令
+      不接受参数；登录/验证页须先人工处理，不会自动刷新或重做招聘操作
   boss login
       打开登录页（需要用户在浏览器中自行完成登录，这个命令会直接返回）
   boss list [--unread]
@@ -133,7 +136,7 @@ function printHelp() {
       仅发送文本消息（等价于在当前会话输入框发送后回车）
       --request-resume：发送后延迟片刻自动执行「求简历」操作
   boss positions
-      读取当前职位列表（含开放/待开放/已关闭状态）
+      读取当前职位列表（含开放/待开放/已关闭状态）；只读job_v2列表frame，统计有职位但无卡片时会报错
   boss jd <name>
       抓取指定职位详情并缓存到项目目录同名 .md
   boss recommend [岗位关键字]
@@ -143,9 +146,10 @@ function printHelp() {
               [--exp <经验要求>|--exp-range <下限-上限>]
               [--age <年龄要求>|--age-range <下限-上限>]
               [--status <求职状态>] [--job-hop <跳槽频率>] [--major <专业>]
-      进入「搜索」页并读取常规搜索结果；带关键词时填入搜索框并回车搜索
-      **每次搜索前都会先点「清空筛选」**，条件不再跨命令粘着
-      --job     在岗位下拉中模糊匹配并切换；不传则切「不限职位」（不再沿用上次的岗位）
+      点击侧栏进入「搜索」页，不用goto重载；提供关键词才执行查询并输出经验证的结果
+      无关键词仅进入表单并清旧快照，不应用岗位/筛选参数、不复用页面旧结果
+      有关键词时先检查并清除旧筛选，再按参数重设；无残留不重复点击清空
+      --job     先确保「不限职位」，再唯一匹配目标并绑定本次选岗请求；重复同岗位也重新绑定，不传只切不限职位
       --city    搜索城市，如 --city 深圳；不传则读环境变量 BOSS_SEARCH_CITY，仍为空则不限城市
                 只接受完全匹配的联想项，匹配不上会报错并列出候选，不会替你猜
       --degree  学历要求：不限 / 本科及以上 / 硕士及以上 / 博士
@@ -165,6 +169,8 @@ function printHelp() {
       --job-hop 跳槽频率，单选：5年少于3份 / 时间≥1年（≥ 可以写成 >=）
       --major   专业，可多选用逗号分隔，最多 10 个；只认完全匹配（如「计算机科学与技术」）
       生效的筛选条件会回显在结果标题里，读的是页面实时状态而不是你传的参数
+      最终验证当前可见搜索iframe及预期条件；geeks响应须匹配关键词/岗位、HTTP2xx且code0，候选人ID顺序与DOM一致后才创建快照
+      隐藏/最小化时非动画DOM条件用100ms轮询；不改变用户窗口状态
   boss preview <姓名>
       在线简历预览：须当前已在「推荐」(/web/chat/recommend)、「深度搜索」(/web/chat/aiform) 或「常规搜索」(/web/chat/search) 且列表已加载；不会自动跳转
       注意：平台对在线简历每日可查看次数有限，请按需使用、谨慎查看
@@ -175,11 +181,14 @@ function printHelp() {
       会消耗打招呼次数且单次成本较高，请谨慎使用
   boss greet [关键词] --index <序号> [--job <岗位关键字>] [--dry-run]
       当前在「常规搜索/搜索池」(/web/chat/search) 时生效；须先跑 boss search 加载列表
-      搜索池姓名被平台打码（崔**），建议用 --index 按 boss search 输出的序号定位（仅当次列表有效）；
-      也可传打码姓名或摘要关键词模糊匹配（命中多人会报错并列出候选）
-      点卡片「畅聊卡 N/M」后平台会弹「选择该牛人开聊职位」确认层，--job 可在弹层内改选职位
-      --dry-run：只走到弹层并点「取消」，不发出招呼、不消耗畅聊卡（用于验证定位是否正确）
-      不带 --dry-run 时会点确认、消耗一张搜索畅聊卡，且不可撤回
+      --index 绑定最近一次 boss search 的页面快照，15 分钟有效；也可用唯一匹配的打码姓名/摘要关键词
+      同时传关键词和 --index 时必须匹配同一张卡；列表自然刷新、沟通后卡片变化、换序、资料变化、DOM 重建或快照缺失/过期会停止，请重新 search
+      详情打开后校验平台encryptGeekId、原卡片对象和完整资料，不按打码姓名重新定位；ID缺失或变化立即停止
+      --job 可在确认弹层内改选职位
+      --dry-run 仅支持搜索池：点击沟通入口后读取弹层并取消，不点确认、不修改持久开聊模式；推荐/深搜页明确拒绝
+      正式执行先用账号权益；只有弹层明确权益不足且确认不可用时，才验证切卡模式后重试并确认
+      入口点击后未出现弹层时须人工核对平台状态；dry-run 也不能保证平台未直接发送
+      提交确认不可撤回；弹层关闭不证明发送成功或实际扣费，须人工核对，不能直接记为已发送
   boss deep-search [岗位关键字] [--job <岗位关键字>] [--core <核心要求>] [--bonus <加分项>] [--clear-core] [--clear-bonus] [--match]
       进入「深度搜索」页并输出当前表单、剩余匹配次数和按钮状态；--core/--bonus 可重复，并按传入列表同步对应分组；--clear-* 清空对应分组
       只有显式提供 --match 时才会点击「立即匹配」并消耗今日匹配次数；--match 输出列表顶部最新 20 条
@@ -370,6 +379,11 @@ export async function executeCommand(argv) {
     }
     if (cmd === 'login') {
         return implLogin();
+    }
+    if (cmd === 'reload') {
+        if (tail.length > 0)
+            die('用法: reload');
+        return runReload();
     }
     // 浏览器跨命令常驻，所以需要一个显式的退出口（跑完招聘想释放内存时用）。
     // 名字不能叫 quit —— 交互模式里 exit / quit 已经是退出 REPL 的别名。

@@ -23,6 +23,7 @@ export {
   defaultSearchCityFromEnv,
 } from './normal-search.js';
 export type { NormalSearchOptions };
+export { runReload } from './reload.js';
 import { runRecommend } from './recommend.js';
 import { runPreview } from './preview.js';
 import { runRecommendGreet } from './greet.js';

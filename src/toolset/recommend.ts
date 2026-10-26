@@ -1,3 +1,4 @@
+import { TimeoutError } from 'puppeteer-core';
 import type { Frame, Page } from 'puppeteer-core';
 import {
   JOB_SEARCH_ACTION_GAP_MS,
@@ -82,7 +83,7 @@ async function ensureRecommendFrameReady(frame: Frame): Promise<void> {
       const root = document.querySelector(".card-list, .geek-list-wrap .geek-list");
       return !!root;
     })()`,
-    { timeout: 18_000 },
+    { timeout: 18_000, polling: 100 },
   );
 }
 
@@ -105,7 +106,7 @@ async function waitForRecommendJobDropdownReady(frame: Frame): Promise<void> {
       }
       return !!options.querySelector(".top-chat-search .chat-job-search");
     })()`,
-    { timeout: 8_000 },
+    { timeout: 8_000, polling: 100 },
   );
 }
 
@@ -123,7 +124,7 @@ async function waitForRecommendJobSearchResults(frame: Frame, keyword: string): 
         return label.includes(norm(kw));
       });
     })()`,
-    { timeout: 10_000 },
+    { timeout: 10_000, polling: 100 },
   );
 }
 
@@ -134,7 +135,7 @@ async function waitForRecommendJobSelected(frame: Frame, expectedLabel: string):
       const current = norm(document.querySelector(".job-selecter-wrap .ui-dropmenu-label")?.textContent);
       return !!current && current === ${JSON.stringify(expectedLabel)};
     })()`,
-    { timeout: 10_000 },
+    { timeout: 10_000, polling: 100 },
   );
   await ensureRecommendFrameReady(frame);
 }
@@ -202,14 +203,22 @@ export async function selectRecommendJob(frame: Frame, keyword: string): Promise
 }
 
 export async function ensureInRecommendPage(page: Page): Promise<Frame> {
-  await ensurePage(page, {
-    name: '推荐列表页',
-    targetUrl: BOSS_CHAT_RECOMMEND_URL,
-    matches: isBossChatRecommendUrl,
-  });
-  const frame = await getRecommendFrame(page);
-  await ensureRecommendFrameReady(frame);
-  return frame;
+  let stage = '进入 /web/chat/recommend';
+  try {
+    await ensurePage(page, {
+      name: '推荐列表页',
+      targetUrl: BOSS_CHAT_RECOMMEND_URL,
+      matches: isBossChatRecommendUrl,
+    });
+    stage = '获取推荐 iframe';
+    const frame = await getRecommendFrame(page);
+    stage = '推荐列表就绪';
+    await ensureRecommendFrameReady(frame);
+    return frame;
+  } catch (error) {
+    if (!(error instanceof TimeoutError)) throw error;
+    throw new Error(`recommend 初始化超时（阶段：${stage}；当前页面：${page.url()}）。${error.message}\n请先在浏览器中确认登录和验证状态，再显式执行 boss reload；主壳刷新成功后重新执行原 boss recommend 命令。`, { cause: error });
+  }
 }
 
 /**
@@ -504,7 +513,7 @@ export async function runRecommend(jobKeyword?: string): Promise<string> {
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    throw new Error(`读取推荐列表失败：${message}`);
+    throw new Error(`读取推荐列表失败：${message}`, { cause: e });
   }
 }
 

@@ -1,4 +1,5 @@
 import type { Frame, Page } from 'puppeteer-core';
+import { withBossSessionPage } from '../common/boss_session_page.js';
 import { type GreetCardDialogState } from '../common/boss_greet_card_dialog.js';
 /**
  * 默认搜索城市。**不硬编码深圳**——这个包是公开发布的，别人不一定在深圳；
@@ -46,21 +47,50 @@ export declare function degreeTokenToIndex(token: string): number;
 export declare function expTokenToIndex(token: string): number;
 /** 把 `--age-range` 的一段转成年龄下拉里的文案。收 `16`~`46` 与 `46+`。 */
 export declare function ageTokenToLabel(token: string): string;
+type NormalSearchCandidate = {
+    candidateId: string;
+    name: string;
+    active: string;
+    labels: string[];
+    basicInfo: string;
+    summary: string;
+    tags: string[];
+    expectation: string;
+    work: string[];
+    education: string;
+    reason: string;
+    contactText: string;
+};
 export declare function isBossChatSearchUrl(url: string): boolean;
+export declare function ensureInNormalSearchPage(page: Page): Promise<Frame>;
+export type ExpectedSearchState = {
+    job?: string;
+    keyword?: string;
+    city?: string;
+};
+export declare function settleNormalSearchFrame(page: Page, expected?: ExpectedSearchState, phase?: 'form' | 'results'): Promise<Frame>;
 export declare function assertNormalSearchPageReadyForPreview(page: Page): Promise<Frame>;
+export declare function runKeywordSearch(page: Page, frame: Frame, keyword: string, expected: ExpectedSearchState): Promise<{
+    frame: Frame;
+    candidateIds: string[];
+}>;
 export declare function readNormalSearchSelectedJobLabel(frame: Frame): Promise<string>;
 /**
  * 在常规搜索页（iframe）切换当前岗位。岗位选项常驻 `.job-name`（即账号自己的开放职位），
  * 模糊匹配 keyword 后点击，等待 `.search-current-job` 变更。keyword 为空则返回当前岗位。
  */
-export declare function selectNormalSearchJob(frame: Frame, keyword: string): Promise<string>;
+export declare function selectNormalSearchJob(frame: Frame, keyword: string, page?: Page): Promise<string>;
 /**
  * 把当前岗位切成「不限职位」——搜全池而不是被某个岗位的画像圈住。
  *
  * 它是岗位下拉的第一项，但**不带 `.job-name`**（那个 class 只给真实职位用），
  * 所以 `selectNormalSearchJob` 的选择器扫不到它，得单独按 `li[ka="search_select_job"]` 找。
  */
-export declare function selectNormalSearchAnyJob(frame: Frame): Promise<string>;
+export declare function selectNormalSearchAnyJob(frame: Frame, page?: Page): Promise<string>;
+export declare function prepareNormalSearchJob(page: Page, frame: Frame, keyword: string): Promise<{
+    frame: Frame;
+    label: string;
+}>;
 /**
  * 选搜索城市。控件是「输入即联想」，不是普通下拉：
  * 点 `.city-wrap` 让输入框获焦 → 往 `.search-city-kw input` 里敲字 →
@@ -121,7 +151,8 @@ export declare function selectNormalSearchSchools(frame: Frame, labels: string[]
  *
  * 已经全是默认态就跳过——少一次无谓点击就少一分自动化特征。
  */
-export declare function resetNormalSearchFilters(frame: Frame): Promise<boolean>;
+export declare function assertNormalSearchFiltersClear(frame: Frame): Promise<void>;
+export declare function resetNormalSearchFilters(frame: Frame, page?: Page): Promise<boolean>;
 /**
  * 求职状态：`.mutil-select` 多选下拉（离职-随时到岗 / 在职-暂不考虑 / 在职-考虑机会 / 在职-月内到岗）。
  *
@@ -194,20 +225,17 @@ export declare function ensureSearchPoolChatCardMode(page: Page): Promise<Search
 export declare function isChatCardDialog(label: string): boolean;
 /** 标题不是耗尽证据；只接受当前弹层明确不足且确认不可用。 */
 export declare function searchPoolDialogFunding(state: GreetCardDialogState): 'account' | 'exhausted' | 'card' | 'unknown';
+export declare function captureSearchPoolSnapshot(frame: Frame, expectedCandidateIds?: string[]): Promise<NormalSearchCandidate[]>;
 export type SearchPoolGreetOptions = {
-    /** 1-based 序号，对应上一次 `boss search` 输出的编号（仅当次列表有效） */
+    /** 1-based 序号，绑定最近一次 search 的页面快照，15 分钟有效。 */
     index?: number;
     /** 打码姓名或摘要关键词 */
     target?: string;
     /** 弹层内改选职位（不传则用平台预选，通常即 `--job` 选中的岗位） */
     jobKeyword?: string;
-    /** true = 只走到弹层并取消，不发出招呼、不消耗畅聊卡 */
+    /** true = 点击沟通入口，确认弹层出现后取消，不点击确认。 */
     dryRun: boolean;
 };
-/**
- * 搜索池打招呼：定位卡片 → 点「畅聊卡 N/M」→ 处理「选择该牛人开聊职位」确认弹层。
- * dryRun 时读完弹层就点「取消」，不消耗额度；否则点 `boss-btn-primary`（不可逆）。
- */
 export declare function greetSearchPoolOnPage(page: Page, options: SearchPoolGreetOptions): Promise<string>;
 export declare function runSearchPoolGreet(options: SearchPoolGreetOptions): Promise<string>;
 export type NormalSearchOptions = {
@@ -234,5 +262,6 @@ export type NormalSearchOptions = {
     /** 专业，可多选，最多 10 个 */
     majors?: string[];
 };
-export declare function runNormalSearch(opts?: NormalSearchOptions): Promise<string>;
+export declare function runNormalSearch(opts?: NormalSearchOptions, withSessionPage?: typeof withBossSessionPage): Promise<string>;
+export {};
 //# sourceMappingURL=normal-search.d.ts.map

@@ -16,6 +16,76 @@ import { sleepRandom } from '../browser/timing.js';
  */
 const DIALOG_ROOT_SELECTOR = '.common-job-list-dialog, .job-list-dialog-main-ui';
 const DIALOG_WAIT_POLL_MS = { min: 220, max: 420 };
+const SEARCH_POOL_SNAPSHOT_MAX_AGE_MS = 15 * 60 * 1000;
+export const SEARCH_CANDIDATE_READER_SCRIPT = `
+  const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
+  const unique = (items) => Array.from(new Set(items.map(norm).filter(Boolean)));
+  const readExperience = el => {
+    const fields = Array.from(el.querySelectorAll(".date, .t-tooltip-slot"));
+    if (norm(el.textContent) && fields.length === 0) throw new Error("经历语义槽位已变化；无法完整核对资料，停止操作。");
+    return fields.map(node => norm(node.textContent)).filter(Boolean).join(" ");
+  };
+  const candidateId = card => {
+    const id = card.__vue__?.$props?.geek?.geekCard?.encryptGeekId;
+    if (typeof id !== "string" || !id.trim()) throw new Error("缺少可核对的平台候选人标识 encryptGeekId；停止操作。");
+    return id;
+  };
+  const readCandidate = (card) => ({
+    candidateId: candidateId(card),
+    name: norm(card.querySelector(".name-label")?.textContent),
+    active: norm(card.querySelector(".active-desc-text")?.textContent),
+    labels: unique(Array.from(card.querySelectorAll(".card-label")).map(el => el.textContent)),
+    basicInfo: norm(card.querySelector(".info-labels")?.textContent),
+    summary: norm(card.querySelector(".info-detail")?.textContent),
+    tags: unique(Array.from(card.querySelectorAll(".info-tags:not(.info-tags-measure) .info-tags-item")).map(el => el.textContent)),
+    expectation: norm(card.querySelector(".expect-exp-box")?.textContent),
+    work: Array.from(card.querySelectorAll(".work-exp-box .work-exp-item")).map(readExperience).filter(Boolean),
+    education: Array.from(card.querySelectorAll(".edu-exp-box li")).map(readExperience).filter(Boolean).join("；"),
+    reason: norm(card.querySelector(".recommend-reason")?.textContent),
+  });
+`;
+export const VALIDATE_SEARCH_SNAPSHOT_SCRIPT = `
+  ${SEARCH_CANDIDATE_READER_SCRIPT}
+  const snapshot = searchWindow.__bossCliSearchSnapshot;
+  if (!snapshot) throw new Error("缺少搜索快照；请先重新执行 boss search。未点击沟通按钮。");
+  if (Date.now() - snapshot.createdAt > ${SEARCH_POOL_SNAPSHOT_MAX_AGE_MS}) {
+    throw new Error("搜索快照已超过 15 分钟；请重新执行 boss search。");
+  }
+  const cards = Array.from(searchDocument.querySelectorAll(".geek-info-card"));
+  if (cards.length !== snapshot.cards.length || cards.some((card, i) =>
+      card !== snapshot.cards[i] || JSON.stringify(readCandidate(card)) !== snapshot.fingerprints[i])) {
+    throw new Error("搜索快照与当前列表身份或顺序不一致；请重新执行 boss search。未继续沟通或确认。");
+  }
+`;
+export function validatedSearchSelectionScript(selection) {
+    return `
+    const topWindow = window.top;
+    if (topWindow.location.origin !== "https://www.zhipin.com" || topWindow.location.pathname.replace(/\\/+$/, "") !== "/web/chat/search") {
+      throw new Error("主页面已离开搜索页；未继续沟通或确认。");
+    }
+    const searchFrames = Array.from(topWindow.document.querySelectorAll('iframe[name="searchFrame"]')).filter(el => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      for (let node = el; node; node = node.parentElement) {
+        const style = topWindow.getComputedStyle(node);
+        if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+      }
+      return true;
+    });
+    if (searchFrames.length !== 1) throw new Error("当前可见搜索 frame 绑定已变化；未继续沟通或确认。");
+    const searchDocument = searchFrames[0].contentDocument;
+    const searchWindow = searchDocument?.defaultView;
+    if (!searchWindow || searchWindow.__bossCliSearchFrameBinding !== ${JSON.stringify(selection.frameBinding)} ||
+        (window !== topWindow && searchDocument !== document)) {
+      throw new Error("当前搜索 frame 与原目标失去绑定；未继续沟通或确认。");
+    }
+    ${VALIDATE_SEARCH_SNAPSHOT_SCRIPT}
+    if (snapshot.id !== ${JSON.stringify(selection.snapshotId)}) throw new Error("搜索快照已更换；未继续沟通或确认。");
+    const pickedIndex = ${selection.index} - 1;
+    const picked = snapshot.cards[pickedIndex];
+    if (!picked || readCandidate(picked).name !== ${JSON.stringify(selection.name)}) throw new Error("候选人身份已变化；未继续沟通或确认。");
+  `;
+}
 const READ_DIALOG_SCRIPT = `(() => {
   const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
   const isVisible = (el) => {
@@ -143,8 +213,9 @@ export async function cancelGreetCardDialog(page, timeoutMs = 5_000) {
  * 点确认按钮（`button.boss-btn-primary`，文案「搜索畅聊卡(N/M)」）真正发出招呼。
  * ⚠️ 不可逆：会消耗一张搜索畅聊卡。仅在调用方已明确要发起沟通时调用。
  */
-export async function confirmGreetCardDialog(page, expected) {
+export async function confirmGreetCardDialog(page, expected, searchSelection) {
     const clicked = (await page.evaluate(`(() => {
+    ${searchSelection ? validatedSearchSelectionScript(searchSelection) : ''}
     const dlg = Array.from(document.querySelectorAll(${JSON.stringify(DIALOG_ROOT_SELECTOR)})).find(el => {
       if (!(el instanceof HTMLElement)) return false;
       const st = window.getComputedStyle(el);
