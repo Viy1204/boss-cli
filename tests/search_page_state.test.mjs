@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
+import { TimeoutError } from 'puppeteer-core';
+import { VALIDATE_SEARCH_SNAPSHOT_SCRIPT } from '../dist/common/boss_greet_card_dialog.js';
 import { ensureMenuListMountedAfterLoad } from '../dist/common/boss_session_page.js';
 import { captureSearchPoolSnapshot, ensureInNormalSearchPage, selectNormalSearchAnyJob, selectNormalSearchJob, settleNormalSearchFrame, runKeywordSearch, assertNormalSearchFiltersClear, prepareNormalSearchJob, runNormalSearch } from '../dist/toolset/normal-search.js';
 
@@ -97,6 +99,7 @@ function pageFixture({ job = '不限职位', keyword = '', city = '深圳', load
   const iframe = new El(); iframe.name = 'searchFrame'; iframe.contentDocument = doc;
   const menuLink = new El('搜索'); menuLink.click = () => { state.menuClicks = (state.menuClicks ?? 0) + 1; state.pagePath = '/web/chat/search'; };
   const mainDoc = { querySelector: selector => selector.includes('menu-geeksearch') ? menuLink : iframe, querySelectorAll: () => [iframe] };
+  window.top = { document: mainDoc, location: { origin: 'https://www.zhipin.com', get pathname() { return state.pagePath; } }, getComputedStyle: el => el.style };
   const globals = document => ({ document, window, location: { pathname: state.pagePath }, getComputedStyle: el => el.style,
     HTMLElement: El, HTMLInputElement: El, Event: class { constructor(type) { this.type = type; } }, KeyboardEvent: class { constructor(type) { this.type = type; } },
     Date: class { static now() { tick += 150; return tick; } },
@@ -298,6 +301,17 @@ test('业务空结果不能把尚未查询的使用说明form当作结果已应�
 });
 
 
+test('新搜索初始化失败后旧快照不能再通过沟通校验', async () => {
+  const f = pageFixture({ keyword: '已有关键词' });
+  await captureSearchPoolSnapshot(f.frame);
+  const validate = () => f.frame.evaluate('(() => { const searchWindow = window; const searchDocument = document;' + VALIDATE_SEARCH_SNAPSHOT_SCRIPT + '})()');
+  await assert.doesNotReject(validate);
+  f.page.waitForNetworkIdle = async () => { throw new TimeoutError('fixture network idle timeout'); };
+  await assert.rejects(runNormalSearch({ keyword: '新的关键词', city: '' }, async callback => callback(f.page)), /search 初始化超时/);
+  await assert.rejects(validate, /缺少搜索快照/);
+  assert.equal(f.window.__bossCliSearchSnapshot, undefined);
+});
+
 for (const warm of [false, true]) {
   test('公开无关键词search仅进入表单并清旧快照：' + (warm ? '暖入口' : '冷入口'), async () => {
     const f = pageFixture({ keyword: warm ? '已有关键词' : '' });
@@ -324,6 +338,27 @@ test('本次响应核对后列表被替换，公开search不得给新列表建�
   await assert.rejects(runNormalSearch({ keyword: '动捕精修', city: '' }, async callback => callback(f.page)), /候选人ID|响应/);
   assert.equal(f.window.__bossCliSearchSnapshot, undefined);
 });
+
+for (const change of ['navigation', 'hidden', 'replaced', 'keyword', 'job', 'city']) {
+  test('最终采集时搜索状态变化不得创建快照：' + change, async () => {
+    const f = pageFixture();
+    f.state.onEnter = () => emitResult(f);
+    const evaluate = f.frame.evaluate;
+    f.frame.evaluate = async script => {
+      if (script.includes('window.__bossCliSearchSnapshot =')) {
+        if (change === 'navigation') f.state.pagePath = '/web/chat/recommend';
+        if (change === 'hidden') f.iframe.style.display = 'none';
+        if (change === 'replaced') f.iframe.contentDocument = {};
+        if (change === 'keyword') f.state.keyword = '其他关键词';
+        if (change === 'job') f.state.job = '其他岗位';
+        if (change === 'city') f.state.city = '北京';
+      }
+      return evaluate(script);
+    };
+    await assert.rejects(runNormalSearch({ keyword: '动捕精修', city: '深圳' }, async callback => callback(f.page)), /搜索|快照/);
+    assert.equal(f.window.__bossCliSearchSnapshot, undefined);
+  });
+}
 
 test('快照采集必须在实际读取资料时核对本次响应的有序ID', async () => {
   const f = pageFixture();

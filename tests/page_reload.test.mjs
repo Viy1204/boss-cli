@@ -139,7 +139,9 @@ for (const extra of [['extra'], ['--force'], ['--wait', '10'], ['--']]) {
 function initializationFixture(kind, error, stage = 'ready') {
   const state = { reloads: 0, gotos: 0 };
   const frame = {
+    name: () => kind === 'search' ? 'searchFrame' : 'recommendFrame',
     url: () => 'https://www.zhipin.com/web/frame/' + (kind === 'search' ? 'search' : 'recommend'),
+    evaluate: async () => {},
     waitForFunction: async () => { throw error; },
   };
   const page = {

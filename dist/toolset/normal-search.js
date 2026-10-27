@@ -202,6 +202,13 @@ async function ensureSearchFrameReady(frame) {
       return !!list || hasCard || !!empty;
     })()`, { timeout: SEARCH_FRAME_READY_TIMEOUT_MS, polling: 100 });
 }
+async function invalidateSearchSnapshots(page) {
+    for (const frame of page.frames()) {
+        if (frame.name() !== 'searchFrame')
+            continue;
+        await frame.evaluate('delete window.__bossCliSearchSnapshot');
+    }
+}
 export async function ensureInNormalSearchPage(page) {
     let stage = '搜索表单与当前 iframe 就绪';
     try {
@@ -1540,9 +1547,32 @@ export function searchPoolDialogFunding(state) {
         return 'unknown';
     return 'account';
 }
-export async function captureSearchPoolSnapshot(frame, expectedCandidateIds) {
+export async function captureSearchPoolSnapshot(frame, expectedCandidateIds, expectedState) {
     return (await frame.evaluate(`(() => {
     ${SEARCH_CANDIDATE_READER_SCRIPT}
+    const expected = ${JSON.stringify(expectedState ?? null)};
+    if (expected) {
+      const topWindow = window.top;
+      if (topWindow.location.origin !== "https://www.zhipin.com" || topWindow.location.pathname.replace(/\\/+$/, "") !== "/web/chat/search") {
+        throw new Error("采集快照时主页面已离开搜索页；未创建搜索快照。");
+      }
+      const boundIframe = (() => {
+        const document = topWindow.document;
+        const window = topWindow;
+        ${VISIBLE_SEARCH_IFRAME_SCRIPT}
+        return iframe;
+      })();
+      if (!boundIframe || boundIframe.contentDocument !== document) throw new Error("采集快照时当前搜索 iframe 绑定已变化；未创建搜索快照。");
+      const job = norm(document.querySelector(".search-current-job")?.textContent);
+      const keyword = document.querySelector(".search-input")?.value;
+      const cityLabel = norm(document.querySelector(".city-wrap .city")?.textContent);
+      const city = cityLabel === "城市" ? "" : cityLabel;
+      if ((expected.job !== undefined && job !== expected.job) ||
+          (expected.keyword !== undefined && keyword !== expected.keyword) ||
+          (expected.city !== undefined && city !== expected.city)) {
+        throw new Error("采集快照时搜索条件已变化；未创建搜索快照。");
+      }
+    }
     const cards = Array.from(document.querySelectorAll(".geek-info-card"));
     const candidates = cards.map(readCandidate);
     if (new Set(candidates.map(candidate => candidate.candidateId)).size !== candidates.length) throw new Error("搜索结果候选人ID重复；不能创建可靠快照。");
@@ -1742,8 +1772,8 @@ export async function runNormalSearch(opts = {}, withSessionPage = withBossSessi
     }
     try {
         return await withSessionPage(async (page) => {
+            await invalidateSearchSnapshots(page);
             let frame = await ensureInNormalSearchPage(page);
-            await frame.evaluate("delete window.__bossCliSearchSnapshot");
             if (!kw) {
                 return '未提供关键词，本次仅进入搜索页，未执行查询。\n已清除旧搜索快照。请提供关键词执行 boss search <关键词>。';
             }
@@ -1820,7 +1850,7 @@ export async function runNormalSearch(opts = {}, withSessionPage = withBossSessi
             }
             if (!isBossChatSearchUrl(page.url()) || await getSearchFrame(page) !== frame)
                 throw new Error('读取结果时页面或搜索 frame 已变化；未创建搜索快照。');
-            const candidates = await captureSearchPoolSnapshot(frame, result.candidateIds);
+            const candidates = await captureSearchPoolSnapshot(frame, result.candidateIds, { job: expectedJob, keyword: kw, ...(city ? { city } : {}) });
             return renderNormalSearchCandidates(candidates, {
                 keyword: currentKeyword || kw,
                 job: currentJob,

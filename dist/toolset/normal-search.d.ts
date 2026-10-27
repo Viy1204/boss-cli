@@ -225,7 +225,7 @@ export declare function ensureSearchPoolChatCardMode(page: Page): Promise<Search
 export declare function isChatCardDialog(label: string): boolean;
 /** 标题不是耗尽证据；只接受当前弹层明确不足且确认不可用。 */
 export declare function searchPoolDialogFunding(state: GreetCardDialogState): 'account' | 'exhausted' | 'card' | 'unknown';
-export declare function captureSearchPoolSnapshot(frame: Frame, expectedCandidateIds?: string[]): Promise<NormalSearchCandidate[]>;
+export declare function captureSearchPoolSnapshot(frame: Frame, expectedCandidateIds?: string[], expectedState?: ExpectedSearchState): Promise<NormalSearchCandidate[]>;
 export type SearchPoolGreetOptions = {
     /** 1-based 序号，绑定最近一次 search 的页面快照，15 分钟有效。 */
     index?: number;
