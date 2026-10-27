@@ -1,6 +1,6 @@
 /**
  * CLI：子命令直接调用 toolset 中的 impl*。
- * 无参数时进入交互模式，逐行解析与 `boss <argv...>` 相同的命令。
+ * 仅在 npm run dev 下无参数进入交互模式，逐行解析与 `boss <argv...>` 相同的命令。
  */
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
@@ -141,21 +141,23 @@ function printHelp(): void {
 
 用法与说明:
   boss
-      进入交互模式；提示符 boss> ，exit / quit 退出；Ctrl+C 正常结束
-  boss help
+      无参数不支持交互模式；请使用 boss help 查看命令
+      源码开发时通过 npm run dev 进入交互模式；提示符 boss>，exit / quit 退出；Ctrl+C 正常结束
+  boss help | --help | -h
       显示本帮助
   boss version | ver（或 -v / --version）
-      显示当前版本并检查 npm 是否有更新
+      显示当前安装包名与版本，并检查 npm 是否有更新
   boss update
-      使用 npm 安装最新版 boss-cli
+      通过 npm 全局更新当前安装包；本 fork 为 @viyzhu/boss-cli-fork
   boss shutdown
-      关掉常驻的浏览器（登录态保留，下条命令会自动重新拉起）
-      浏览器默认有头（真窗口）且跨命令常驻；无头有账号被限风险，别设 RECRUIT_BROWSER_HIDDEN=true
+      关闭常驻浏览器，保留浏览器数据目录；登录是否有效以平台为准，下条业务命令会重新启动浏览器
+      浏览器默认有头且跨命令常驻；BOSS_BROWSER_HEADLESS 优先于 RECRUIT_BROWSER_HIDDEN
+      切换有头/无头配置后须先 boss shutdown，下条命令才按新配置启动
   boss reload
       刷新当前已登录的 Boss 主壳页并等待侧栏就绪；旧搜索快照失效，需重新执行原只读命令
       不接受参数；登录/验证页须先人工处理，不会自动刷新或重做招聘操作
   boss login
-      打开登录页（需要用户在浏览器中自行完成登录，这个命令会直接返回）
+      打开可见登录页后立即返回，不等待或确认登录成功；请在浏览器中完成人工登录和验证
   boss list [--unread]
       读取「全部」聊天列表候选人；--unread 仅显示未读（角标>0）
   boss chat <姓名> [--strict]
@@ -167,15 +169,16 @@ function printHelp(): void {
   boss action <操作> [--remark <备注>]
       仅在当前聊天页已打开候选人详情时执行操作，并只返回 action 执行结果
       操作: resume | not-fit | remark | agree-resume | request-attachment-resume | history | wechat
-      request-attachment-resume：工具栏「求简历」，确认后向对方发送默认话术索要附件简历（需双方各至少发过一条消息）
+      resume：读取在线简历，默认保存 PNG 并输出路径；OCR 默认关闭，需显式设置 BOSS_RESUME_OCR=1 和百度密钥
+      agree-resume：同意接收附件简历请求；request-attachment-resume：工具栏「求简历」，确认后发送默认话术（需双方各至少发过一条消息）
       操作为 remark 时必须提供 --remark
-  boss send [--text <内容>] [-t <内容>] [--request-resume]
-      仅发送文本消息（等价于在当前会话输入框发送后回车）
+  boss send --text <内容> [--request-resume]
+      向当前已打开的候选人会话发送文本；-t 是 --text 的别名
       --request-resume：发送后延迟片刻自动执行「求简历」操作
   boss positions
       读取当前职位列表（含开放/待开放/已关闭状态）；只读job_v2列表frame，统计有职位但无卡片时会报错
   boss jd <name>
-      抓取指定职位详情并缓存到项目目录同名 .md
+      读取指定职位 JD，缓存到 ~/.boss-cli/jd/ 下的 .md；命中已有缓存时直接返回，不访问职位页
   boss recommend [岗位关键字]
       进入推荐页并读取推荐列表；带岗位关键字时先在岗位下拉中模糊匹配并切换
   boss search [关键词] [--job <岗位>] [--city <城市>] [--school <院校要求>]
@@ -187,7 +190,8 @@ function printHelp(): void {
       无关键词仅进入表单并清旧快照，不应用岗位/筛选参数、不复用页面旧结果
       有关键词时先检查并清除旧筛选，再按参数重设；无残留不重复点击清空
       --job     先确保「不限职位」，再唯一匹配目标并绑定本次选岗请求；重复同岗位也重新绑定，不传只切不限职位
-      --city    搜索城市，如 --city 深圳；不传则读环境变量 BOSS_SEARCH_CITY，仍为空则不限城市
+      --city    搜索城市，如 --city 深圳；不传则读环境变量 BOSS_SEARCH_CITY，仍为空则不操作城市控件
+                城市不在清空筛选范围内，可能沿用页面已有值或被平台在换岗时清除；需要固定城市请显式指定
                 只接受完全匹配的联想项，匹配不上会报错并列出候选，不会替你猜
       --degree  学历要求：不限 / 本科及以上 / 硕士及以上 / 博士
       --degree-range  学历要求的自定义区间（拖滑块），如 --degree-range 大专-本科；
@@ -209,10 +213,11 @@ function printHelp(): void {
       最终验证当前可见搜索iframe及预期条件；geeks响应须匹配关键词/岗位、HTTP2xx且code0，候选人ID顺序与DOM一致后才创建快照
       隐藏/最小化时非动画DOM条件用100ms轮询；不改变用户窗口状态
   boss preview <姓名>
-      在线简历预览：须当前已在「推荐」(/web/chat/recommend)、「深度搜索」(/web/chat/aiform) 或「常规搜索」(/web/chat/search) 且列表已加载；不会自动跳转
+      在线简历预览：须当前已在「推荐」(/web/chat/recommend) 或「常规搜索」(/web/chat/search) 且列表已加载；不自动切换列表页
+      默认保存 PNG 并输出路径；OCR 默认关闭，不支持 --index 或 --job；旧深搜页分支暂不可用
       注意：平台对在线简历每日可查看次数有限，请按需使用、谨慎查看
   boss greet <姓名> [--job <岗位关键字>]
-      须当前已在「推荐」(/web/chat/recommend) 或「深度搜索」(/web/chat/aiform) 且列表已加载；不会自动跳转
+      须当前已在「推荐」(/web/chat/recommend) 且列表已加载；不自动切换列表页；旧深搜页分支暂不可用
       对当前列表中的候选人点击“打招呼”
       可选 --job 先在岗位下拉中模糊匹配并切换（与 recommend 共用同一套选择逻辑）
       会消耗打招呼次数且单次成本较高，请谨慎使用
@@ -226,9 +231,11 @@ function printHelp(): void {
       正式执行先用账号权益；只有弹层明确权益不足且确认不可用时，才验证切卡模式后重试并确认
       入口点击后未出现弹层时须人工核对平台状态；dry-run 也不能保证平台未直接发送
       提交确认不可撤回；弹层关闭不证明发送成功或实际扣费，须人工核对，不能直接记为已发送
-  boss deep-search [岗位关键字] [--job <岗位关键字>] [--core <核心要求>] [--bonus <加分项>] [--clear-core] [--clear-bonus] [--match]
-      进入「深度搜索」页并输出当前表单、剩余匹配次数和按钮状态；--core/--bonus 可重复，并按传入列表同步对应分组；--clear-* 清空对应分组
-      只有显式提供 --match 时才会点击「立即匹配」并消耗今日匹配次数；--match 输出列表顶部最新 20 条
+  boss deep-search（暂不可用）
+      实现仍依赖已下线的 /web/chat/aiform，尚未适配新版 /web/chat/search/ai；请在网页端人工使用
+      保留的旧页面参数：[岗位关键字] 或 --job <岗位关键字>；--core <核心要求>、--bonus <加分项>（可重复）
+      --clear-core / --clear-bonus 清空对应分组；以上参数不表示新版已适配
+      旧实现中仅显式提供 --match 才点击「立即匹配」并消耗匹配次数，最多输出最新 20 条
   
   !!鉴于boss的风控机制存在更新，且本cli的功能在逐步完善中，若遇到部分操作问题，请先检查版本更新
 `);
