@@ -1,24 +1,39 @@
 # Boss URL 与功能对照
 
-本文件记录 boss-cli 已知页面 URL、对应命令和当前位置要求。修改页面导航、命令入口或报错文案前，先对照这里，避免把某个命令改成隐式跳转或多路径兜底。
+本文件记录 boss-cli 已知页面 URL、对应命令和当前位置要求。修改页面导航、命令入口、help 或报错文案前，先对照这里，避免把某个命令改成隐式跳转或多路径兜底。
 
 ## 页面 URL
 
 | URL / Path | 页面功能 | 相关命令 | 当前行为 |
 | --- | --- | --- | --- |
-| `https://www.zhipin.com/web/user/?ka=header-login` | 登录入口 | `boss login` | 直接打开登录页，交还给人工扫码/验证。 |
+| `https://www.zhipin.com/web/user/?ka=header-login` | 登录入口 | `boss login` | 打开可见登录页后立即返回，交还给人工扫码/验证；不等待或确认登录成功。已有无头实例时会关闭并以有头模式重启，保留浏览器数据目录。 |
 | 当前 `/web/chat/*` | 已登录主壳页 | `boss reload` | 显式刷新当前主标签页，不接受参数；刷新前作废搜索 iframe 的旧快照，`load` 后校验仍在主壳且侧栏就绪。不主动关闭或新建浏览器、不导航至其他业务页、不执行查询。登录页、验证页、风险熔断或侧栏加载失败均拒绝成功输出。 |
 | `/web/chat/index` | 沟通列表、候选人会话页 | `boss list`、`boss list --unread`、`boss chat <姓名>`、`boss chat [姓名] --index <序号> [--unread]`、`boss send`、`boss action` | `list` / `chat` 会先检查当前位置，不在该页时直接进入；`chat --index` 使用 `boss list` 输出的 1-based 序号，带 `--unread` 时使用 `boss list --unread` 输出的序号；同时提供姓名时会校验序号对应候选人姓名，适合处理同名候选人；`send` / `action` 要求当前会话已打开。 |
 | `/web/chat/recommend` | 推荐候选人列表 | `boss recommend`、`boss preview <姓名>`、`boss greet <姓名>` | `recommend` 会先检查当前位置，不在该页时直接进入；`preview` / `greet` 要求当前已在该页且列表已加载；`greet --dry-run` 会在任何按钮点击前拒绝。 |
-| `/web/chat/aiform` | 深度搜索 / Agent 搜索 | `boss deep-search [--core <要求>] [--bonus <加分项>] [--clear-core] [--clear-bonus] [--match]`、`boss preview <姓名>`、`boss greet <姓名>` | `deep-search` 会先检查当前位置，不在该页时直接进入；默认只输出招聘要求表单、核心要求、加分项、今日剩余匹配次数和按钮状态，不输出候选列表；`--core` / `--bonus` 可重复，并按传入列表同步对应分组（多余行会删除，不足会新增），`--clear-core` / `--clear-bonus` 清空对应分组；只有 `--match` 会消耗今日匹配次数并输出列表顶部最新 20 条；`preview` / `greet` 要求当前已在该页且列表已加载；`greet --dry-run` 会在任何按钮点击前拒绝。 |
+| `/web/chat/aiform` | 已下线的旧深度搜索 / Agent 搜索 | `boss deep-search`；`preview` / `greet` 的旧页分支 | **暂不可用**。实现仍导航到此路径并依赖旧表单、iframe 和候选列表；命令入口与旧参数保留，不代表新版已适配。旧页 `preview` / `greet` 分支也不代表可用能力。 |
+| `/web/chat/search/ai` | 新版深度搜索 | 暂无已适配命令 | CLI 尚未适配，`deep-search`、`preview`、`greet` 均不能据此使用新版深度搜索；需要时在网页端人工操作。 |
 | `/web/chat/search` | 常规搜索 | `boss search [关键词] [--job] [--city] [--degree|--degree-range] [--school] [--exp|--exp-range] [--age|--age-range] [--status] [--job-hop] [--major]`、`boss preview <姓名>`、`boss greet [关键词] --index <序号> [--job] [--dry-run]` | `search` 会先检查当前位置，不在该页时只点击已观测的侧栏 `.menu-geeksearch a[ka="menu-geek-search"]`，不使用 goto 重载或导航回退；带关键词时填入搜索框并回车搜索；**有关键词时先检查并清除旧筛选，再按本次参数重设；无残留不重复点击 `.reset-btn`**，筛选条件不跨命令粘连；有关键词时不传 `--job` 切「不限职位」；城市不在清空范围内（换岗位时平台自己会清）；学历 / 经验 / 年龄是三个独立的单选块（`.degree-ui` / `.exp-list-ui` / `.age-list-ui`，都**不在**「其他筛选」里），院校是多选（`.school-ui`），学历/经验/年龄的「自定义」区间走 `--degree-range` / `--exp-range`（拖 `.experience-select-custom-slider` 的双手柄滑块，按 hidden 的 `min,max` 档位校验纠偏）/ `--age-range`（`.age-custom` 两个下拉，值在 hidden 上：普通年龄存数字、46岁+ 存 10000、不限存 -1）；滑块拖完一律按 hidden 真实档位校验纠偏，且不许拖过对面手柄（两手柄重叠会让按下标取手柄失准）；结果标题里的条件全部实时读页面，不打入参；`preview` 要求当前已在该页且列表已加载，不支持 `--job`。 |
-| `/web/chat/job/list` | 职位管理列表 | `boss positions`、`boss jd <name>` | 可通过侧栏进入职位管理页后读取；当前列表 frame 为 `/web/frame/job_v2/list`，卡片根为 `.job-item-container`。只匹配该 frame URL，不扫描后台搜索 frame。统计大于零但卡片未加载、或主页面已离开职位页时拒绝成功输出。 |
+| `/web/chat/job/list` | 职位管理列表 | `boss positions`、`boss jd <name>` | `positions` 或未命中本地缓存的 `jd` 通过侧栏进入职位管理页后读取；`jd` 缓存位于 `~/.boss-cli/jd/`，命中时直接返回文件内容，不连接浏览器或导航。当前列表 frame 为 `/web/frame/job_v2/list`，卡片根为 `.job-item-container`。只匹配该 frame URL，不扫描后台搜索 frame。统计大于零但卡片未加载、或主页面已离开职位页时拒绝成功输出。 |
 
 ## 约定
 
 - 当前 URL 校验优先于 DOM 猜测。命令依赖特定页面时，先检查 path，再执行页面读取或点击。
 - 不为高风险操作添加隐式兜底跳转。需要用户处于特定页面的命令，应直接报出当前 URL 与目标 URL。
 - 页面入口发生变化时，同步更新本文件和相关命令 help 文案。
+
+## CLI 帮助与本地行为
+
+- 安装后的 `boss` 无参数会报错退出；交互模式仅由源码开发命令 `npm run dev` 启动，输入 `exit` / `quit` 或按 Ctrl+C 结束。`boss help`、`boss --help`、`boss -h` 输出同一份帮助。
+- `version` 显示当前安装包名和版本并检查 npm；`update` 通过 npm 全局更新当前安装包，本 fork 为 `@viyzhu/boss-cli-fork`。
+- 浏览器默认有头且跨命令常驻。`BOSS_BROWSER_HEADLESS` 的有效值优先于 `RECRUIT_BROWSER_HIDDEN`；修改配置不影响已运行的实例，须先 `boss shutdown` 再执行下一条业务命令。`shutdown` 保留浏览器数据目录，登录是否仍有效以平台为准。
+- `jd` 先按请求名称查找 `~/.boss-cli/jd/` 下的 Markdown 缓存，命中即返回；无过期时间或刷新参数。`reload` 不更新 JD 缓存。
+- `action resume` 和 `preview` 默认保存 PNG 并输出截图路径，目录为 `~/.boss-cli/.cache/resume-screenshots/`。OCR 默认关闭，显式设置 `BOSS_RESUME_OCR=1` 并配置百度密钥后才启用。`preview` 不支持 `--index` 或 `--job`，须先加载推荐或常规搜索列表。
+
+## 深度搜索暂不可用
+
+`deep-search` 仍依赖已下线的 `/web/chat/aiform`，尚未迁移到 `/web/chat/search/ai`；新版暂须网页端人工使用。源码保留的旧页导航、表单操作及 `preview` / `greet` 分支不构成新版支持。
+
+以下仅记录旧页面参数语义：岗位关键字可用位置参数或 `--job` 提供；`--core` / `--bonus` 可重复并同步对应分组，`--clear-core` / `--clear-bonus` 清空对应分组。旧实现默认只读表单与剩余匹配次数；仅显式传 `--match` 才点击“立即匹配”、消耗次数，并最多输出最新 20 条候选人。这些参数仍能解析，不表示当前功能可用。
 
 ## 搜索池 greet 的定位与确认
 
@@ -35,6 +50,7 @@
 - 主页面必须仍为 `/web/chat/search`。等待网络空闲、可见 loading 消失、岗位标签与 active 项一致、指定关键词/城市匹配，以及完整语义资料连续 500ms 稳定。初始化和选岗使用 form-ready，合法初始使用说明页只须输入框、列表容器、岗位控件就绪，不要求已产生结果。匹配业务响应后使用 results-ready，空查询结果必须存在可见 `.empty-tips`，无卡片本身不是查询成功证据。
 - 关键词变化时，只有输入框回填不能说明结果更新；必须收到同一动作 frame 新发起的 `/wapi/zpitem/web/boss/search/geeks.json` 响应，keywords 精确匹配、page=1；不限岗位 jobId 必须为空，明确岗位 jobId 必须等于同次选岗 `getFilterConditions.encryptJobId` 的绑定值。HTTP2xx、code=0 且 zpData.geeks 数组有效后，响应/当前 DOM 的 encryptGeekId 必须按顺序完全一致。无关埋点、autoSuggest 和仅资料变化均不作为成功依据。
 - 清空筛选后重新读取学历、经验、年龄、院校和其他筛选，仍有残留则停止。最终创建快照前再校验主 URL、当前 iframe 绑定及岗位/关键词/指定城市。
+- 城市仅在有关键词时应用：`--city` 优先，否则读取 `BOSS_SEARCH_CITY`；仍为空则不操作城市控件，并非强制“不限城市”。城市不在清空筛选范围内，可能沿用页面已有值，也可能被平台在换岗时清除；需要固定城市应每次显式指定或配置该环境变量，再核对结果标题的页面实际条件。
 - 主壳、侧栏导航、搜索及推荐列表/岗位下拉/岗位搜索/选中状态的非动画 DOM 条件使用 100ms 数值 polling，不依赖隐藏页面可能停止的 requestAnimationFrame。不会恢复最小化窗口或提高 protocolTimeout。
 - work/education 按 `.date` 和 `.t-tooltip-slot` 完整语义文本读取，排除 `.t-tooltip-content` 中的重复浮层副本；实际日期、公司、岗位、院校或专业变化仍会触发身份失配。
 
