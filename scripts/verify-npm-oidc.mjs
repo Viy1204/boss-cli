@@ -52,7 +52,13 @@ try {
     throw new Error('npm OIDC response is missing a short-lived token.');
   }
   if (!Number.isFinite(Date.parse(exchange.expires)) || Date.parse(exchange.expires) <= Date.now()) {
-    throw new Error('npm OIDC response has an invalid or expired expiry.');
+    const expiryMetadata = Object.fromEntries(['expires', 'expiry', 'Expires', 'expires_at', 'expiresAt', 'created']
+      .map(key => [key, {
+        type: typeof exchange[key],
+        value: typeof exchange[key] === 'number' || /^\d{4}-\d{2}-\d{2}T[\d:.+Z-]+$/.test(exchange[key])
+          ? exchange[key] : '<not a timestamp>',
+      }]));
+    throw new Error(`npm OIDC response has an invalid or expired expiry: [DEBUG-oidc-expiry] now=${new Date().toISOString()} ${JSON.stringify(expiryMetadata)}`);
   }
 
   console.log(`OIDC identity verified for ${packageName}.`);

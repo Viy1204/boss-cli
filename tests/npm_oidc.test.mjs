@@ -30,7 +30,8 @@ function verify(scenario = {}) {
       if (scenario.malformedResponse) return new Response('${npmToken}', { status: 201 });
       return new Response(JSON.stringify(scenario.missingNpmToken ? {} : {
         token: '${npmToken}',
-        expires: scenario.expired ? '2000-01-01T00:00:00.000Z' : '2999-01-01T00:00:00.000Z',
+        expires: scenario.missingExpiry ? undefined : scenario.invalidExpiry ? '${npmToken}'
+          : scenario.expired ? '2000-01-01T00:00:00.000Z' : '2999-01-01T00:00:00.000Z',
       }), { status: scenario.exchangeStatus ?? 201 });
     };
     await import(${JSON.stringify(script)});
@@ -95,6 +96,8 @@ for (const [scenario, message] of [
   [{ malformedResponse: true }, /npm OIDC exchange: invalid JSON response/],
   [{ missingNpmToken: true }, /npm OIDC response is missing a short-lived token/],
   [{ expired: true }, /npm OIDC response has an invalid or expired expiry/],
+  [{ missingExpiry: true }, /npm OIDC response has an invalid or expired expiry/],
+  [{ invalidExpiry: true }, /npm OIDC response has an invalid or expired expiry/],
 ]) {
   test(`无效响应必须失败：${Object.keys(scenario)[0]}`, () => {
     const result = verify(scenario);
