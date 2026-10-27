@@ -14,6 +14,11 @@ on:
         description: 'Publish version without leading v (optional; defaults to package.json when manually dispatched)'
         required: false
         type: string
+      verify_only:
+        description: 'Verify npm OIDC identity only; do not publish or change dist-tags'
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -26,35 +31,34 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+      NPM_CONFIG_LOGS_MAX: '0'
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Decide npm publish
-        id: npm_gate
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -n "$NPM_TOKEN" ]; then
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            echo "NPM_TOKEN secret is missing; skipping publish."
-          fi
-
       - name: Setup Node
-        if: ${{ steps.npm_gate.outputs.publish == 'true' }}
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
+
+      # Node 22 自带 npm 10；publish 和 dist-tag 的 OIDC 都需要 npm 11.21+。
+      # 不设置 setup-node 的 registry-url，避免生成传统 token 占位配置。
+      - name: Install npm with OIDC support
+        run: |
+          npm install --global npm@11.21.1 --ignore-scripts
+          test "$(npm --version)" = '11.21.1'
+
+      - name: Verify npm OIDC identity
+        run: node scripts/verify-npm-oidc.mjs
 
       - name: Resolve target version
         id: version
-        if: ${{ steps.npm_gate.outputs.publish == 'true' }}
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.verify_only }}
         run: |
           set -euo pipefail
           current_version="$(node -p "require('./package.json').version")"
@@ -84,7 +88,7 @@ jobs:
           echo "dist_tag=$dist_tag" >> "$GITHUB_OUTPUT"
 
       - name: Sync package version
-        if: ${{ steps.npm_gate.outputs.publish == 'true' }}
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.verify_only }}
         run: |
           current_version="$(node -p "require('./package.json').version")"
           target_version="${{ steps.version.outputs.target }}"
@@ -95,42 +99,48 @@ jobs:
           fi
 
       - name: Install dependencies
-        if: ${{ steps.npm_gate.outputs.publish == 'true' }}
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.verify_only }}
         run: npm ci
 
       - name: Build package
-        if: ${{ steps.npm_gate.outputs.publish == 'true' }}
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.verify_only }}
         run: npm run build
 
       - name: Check published npm version
         id: npm_version
-        if: ${{ steps.npm_gate.outputs.publish == 'true' }}
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.verify_only }}
         run: |
+          set -euo pipefail
           version="${{ steps.version.outputs.target }}"
           pkg="$(node -p "require('./package.json').name")"
-          echo "name=$pkg" >> "$GITHUB_OUTPUT"
-          if npm view "${pkg}@${version}" version --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "${pkg} ${version} is already published; skipping npm publish."
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+          encoded="$(node -p "encodeURIComponent(require('./package.json').name)")"
+          status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            "https://registry.npmjs.org/${encoded}/${version}")"
+          case "$status" in
+            200)
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+              echo "${pkg} ${version} is already published; skipping npm publish."
+              ;;
+            404)
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "npm version check failed: ${pkg}@${version}, HTTP ${status}" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Check publish payload
-        if: ${{ steps.npm_gate.outputs.publish == 'true' && steps.npm_version.outputs.exists != 'true' }}
+        if: ${{ (github.event_name != 'workflow_dispatch' || !inputs.verify_only) && steps.npm_version.outputs.exists != 'true' }}
         run: npm pack --dry-run --json
 
       - name: Publish npm package
         id: npm_publish
-        if: ${{ steps.npm_gate.outputs.publish == 'true' && steps.npm_version.outputs.exists != 'true' }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        if: ${{ (github.event_name != 'workflow_dispatch' || !inputs.verify_only) && steps.npm_version.outputs.exists != 'true' }}
         run: npm publish --access public --tag "${{ steps.version.outputs.dist_tag }}"
 
       - name: Update npm dist-tag
-        if: ${{ steps.npm_gate.outputs.publish == 'true' }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.verify_only }}
         run: |
           set -euo pipefail
           target="${{ steps.version.outputs.target }}"
@@ -142,7 +152,7 @@ jobs:
       # registry 是最终一致的（首发或新包尤其慢），元数据没跟上不代表发布失败，
       # 所以这里只在「本次真的执行过 publish」时把超时降级成 warning。
       - name: Verify npm dist-tag
-        if: ${{ steps.npm_gate.outputs.publish == 'true' }}
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.verify_only }}
         env:
           PUBLISHED_THIS_RUN: ${{ steps.npm_publish.outcome }}
         run: |
