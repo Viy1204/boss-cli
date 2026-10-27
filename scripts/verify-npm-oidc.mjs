@@ -51,14 +51,9 @@ try {
   if (typeof exchange?.token !== 'string' || !exchange.token) {
     throw new Error('npm OIDC response is missing a short-lived token.');
   }
-  if (!Number.isFinite(Date.parse(exchange.expires)) || Date.parse(exchange.expires) <= Date.now()) {
-    const expiryMetadata = Object.fromEntries(['expires', 'expiry', 'Expires', 'expires_at', 'expiresAt', 'created']
-      .map(key => [key, {
-        type: typeof exchange[key],
-        value: typeof exchange[key] === 'number' || /^\d{4}-\d{2}-\d{2}T[\d:.+Z-]+$/.test(exchange[key])
-          ? exchange[key] : '<not a timestamp>',
-      }]));
-    throw new Error(`npm OIDC response has an invalid or expired expiry: [DEBUG-oidc-expiry] now=${new Date().toISOString()} ${JSON.stringify(expiryMetadata)}`);
+  // registry 实测返回 Unix 秒数，官方文档的 date-time 示例与实际响应不符。
+  if (!Number.isSafeInteger(exchange.expires) || exchange.expires * 1000 <= Date.now()) {
+    throw new Error('npm OIDC response has an invalid or expired expiry.');
   }
 
   console.log(`OIDC identity verified for ${packageName}.`);

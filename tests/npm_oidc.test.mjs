@@ -31,7 +31,8 @@ function verify(scenario = {}) {
       return new Response(JSON.stringify(scenario.missingNpmToken ? {} : {
         token: '${npmToken}',
         expires: scenario.missingExpiry ? undefined : scenario.invalidExpiry ? '${npmToken}'
-          : scenario.expired ? '2000-01-01T00:00:00.000Z' : '2999-01-01T00:00:00.000Z',
+          : scenario.stringExpiry ? '2999-01-01T00:00:00.000Z'
+          : scenario.expired ? 946684800 : 32472144000,
       }), { status: scenario.exchangeStatus ?? 201 });
     };
     await import(${JSON.stringify(script)});
@@ -98,6 +99,7 @@ for (const [scenario, message] of [
   [{ expired: true }, /npm OIDC response has an invalid or expired expiry/],
   [{ missingExpiry: true }, /npm OIDC response has an invalid or expired expiry/],
   [{ invalidExpiry: true }, /npm OIDC response has an invalid or expired expiry/],
+  [{ stringExpiry: true }, /npm OIDC response has an invalid or expired expiry/],
 ]) {
   test(`无效响应必须失败：${Object.keys(scenario)[0]}`, () => {
     const result = verify(scenario);
