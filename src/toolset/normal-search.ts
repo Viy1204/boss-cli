@@ -1,22 +1,25 @@
-import type { ElementHandle, Frame, Page } from 'puppeteer-core';
+import { randomUUID } from 'node:crypto';
+import { TimeoutError } from 'puppeteer-core';
+import type { ElementHandle, Frame, HTTPRequest, HTTPResponse, Page } from 'puppeteer-core';
 import { RESUME_PREVIEW_OPEN_GAP_MS, sleepRandom } from '../browser/index.js';
 import { withBossSessionPage } from '../common/boss_session_page.js';
-import { ensurePage } from '../common/ensure_page.js';
 import {
   type GreetCardDialogState,
+  type SearchPoolSelection,
+  SEARCH_CANDIDATE_READER_SCRIPT,
+  VALIDATE_SEARCH_SNAPSHOT_SCRIPT,
   cancelGreetCardDialog,
   confirmGreetCardDialog,
   readGreetCardDialog,
   renderGreetCardDialog,
   selectGreetCardDialogJob,
+  validatedSearchSelectionScript,
   waitForGreetCardDialog,
 } from '../common/boss_greet_card_dialog.js';
 
-const BOSS_CHAT_SEARCH_URL = 'https://www.zhipin.com/web/chat/search';
 /** 点「畅聊卡」后等确认弹层出现**并渲染完**（职位列表是异步拉的）的最长时间 */
 const GREET_CARD_DIALOG_WAIT_MS = 12_000;
 const SEARCH_FRAME_READY_TIMEOUT_MS = 18_000;
-const SEARCH_RESULT_SETTLE_MS = { min: 900, max: 1600 } as const;
 const JOB_SWITCH_SETTLE_MS = { min: 700, max: 1300 } as const;
 /** 城市控件是输入即联想，等联想列表渲染；也顺带把连续点击拉开距离。 */
 const CITY_SETTLE_MS = { min: 800, max: 1500 } as const;
@@ -173,6 +176,7 @@ export function ageTokenToLabel(token: string): string {
 }
 
 type NormalSearchCandidate = {
+  candidateId: string;
   name: string;
   active: string;
   labels: string[];
@@ -199,30 +203,36 @@ export function isBossChatSearchUrl(url: string): boolean {
   }
 }
 
-async function getSearchFrame(page: Page): Promise<Frame> {
-  const iframe = await page.waitForSelector('iframe[name="searchFrame"]', {
-    timeout: SEARCH_FRAME_READY_TIMEOUT_MS,
-  });
-  if (!iframe) {
-    throw new Error('未找到常规搜索 iframe（iframe[name="searchFrame"]）。');
-  }
-
-  const deadline = Date.now() + SEARCH_FRAME_READY_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    const frame = await iframe.contentFrame();
-    if (frame && frame.url().includes('/web/frame/search')) {
-      return frame;
+const VISIBLE_SEARCH_IFRAME_SCRIPT = `
+  const searchIframes = Array.from(document.querySelectorAll('iframe[name="searchFrame"]')).filter(el => {
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    for (let node = el; node; node = node.parentElement) {
+      const style = window.getComputedStyle(node);
+      if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
     }
-    await sleepRandom(120, 220);
-  }
+    return true;
+  });
+  if (searchIframes.length > 1) throw new Error("存在多个可见搜索 iframe；无法可靠定位。");
+  const iframe = searchIframes[0];
+`;
 
-  const iframeSrc = (await page.evaluate(
-    `(() => document.querySelector('iframe[name="searchFrame"]')?.getAttribute("src") ?? "")()`,
-  )) as string;
-  const frameUrls = page.frames().map((f) => f.url()).join(' | ');
-  throw new Error(
-    `已检测到常规搜索 iframe，但无法获取其页面上下文。iframe src：${iframeSrc || 'unknown'}；frames：${frameUrls || 'empty'}`,
-  );
+async function getSearchFrame(page: Page): Promise<Frame> {
+  const token = randomUUID();
+  const binding = await page.evaluate(`(() => {
+    ${VISIBLE_SEARCH_IFRAME_SCRIPT}
+    const doc = iframe?.contentDocument;
+    if (!doc) throw new Error("当前搜索 iframe 文档尚未就绪。");
+    doc.defaultView.__bossCliSearchFrameBinding = ${JSON.stringify(token)};
+    return { name: iframe.name, url: doc.location.href };
+  })()`) as { name: string; url: string };
+  const matches = page.frames().filter(frame => frame.name() === binding.name && frame.url() === binding.url);
+  const verified: Frame[] = [];
+  for (const frame of matches) {
+    if (await frame.evaluate(`window.__bossCliSearchFrameBinding === ${JSON.stringify(token)}`)) verified.push(frame);
+  }
+  if (verified.length !== 1) throw new Error('搜索 iframe 与读取 frame 不匹配；停止操作。');
+  return verified[0]!;
 }
 
 async function ensureSearchFrameReady(frame: Frame): Promise<void> {
@@ -235,18 +245,95 @@ async function ensureSearchFrameReady(frame: Frame): Promise<void> {
       const empty = document.querySelector(".empty-tips");
       return !!list || hasCard || !!empty;
     })()`,
-    { timeout: SEARCH_FRAME_READY_TIMEOUT_MS },
+    { timeout: SEARCH_FRAME_READY_TIMEOUT_MS, polling: 100 },
   );
 }
 
-async function ensureInNormalSearchPage(page: Page): Promise<Frame> {
-  await ensurePage(page, {
-    name: '常规搜索页',
-    targetUrl: BOSS_CHAT_SEARCH_URL,
-    matches: isBossChatSearchUrl,
-  });
+async function invalidateSearchSnapshots(page: Page): Promise<void> {
+  for (const frame of page.frames()) {
+    if (frame.name() !== 'searchFrame') continue;
+    await frame.evaluate('delete window.__bossCliSearchSnapshot');
+  }
+}
+
+export async function ensureInNormalSearchPage(page: Page): Promise<Frame> {
+  let stage = '搜索表单与当前 iframe 就绪';
+  try {
+    if (!isBossChatSearchUrl(page.url())) {
+      stage = '侧栏进入 /web/chat/search';
+      const clicked = await page.evaluate(`(() => {
+        const link = document.querySelector('.menu-geeksearch a[ka="menu-geek-search"]');
+        if (!(link instanceof HTMLElement)) throw new Error("未找到侧栏搜索入口；停止操作。");
+        link.click();
+        return true;
+      })()`);
+      if (!clicked) throw new Error('侧栏搜索入口点击失败；停止操作。');
+      await page.waitForFunction('location.pathname === "/web/chat/search"', { timeout: SEARCH_FRAME_READY_TIMEOUT_MS, polling: 100 });
+    }
+    stage = '搜索表单与当前 iframe 就绪';
+    return await settleNormalSearchFrame(page);
+  } catch (error) {
+    if (!(error instanceof TimeoutError)) throw error;
+    throw new Error(`search 初始化超时（阶段：${stage}；当前页面：${page.url()}）。${error.message}\n请先在浏览器中确认登录和验证状态，再显式执行 boss reload；主壳刷新成功后重新执行原 boss search 命令。`, { cause: error });
+  }
+}
+
+export type ExpectedSearchState = { job?: string; keyword?: string; city?: string };
+const selectedSearchJobs = new WeakMap<Page, { label: string; id: string }>();
+
+export async function settleNormalSearchFrame(page: Page, expected: ExpectedSearchState = {}, phase: 'form' | 'results' = 'form'): Promise<Frame> {
+  if (!isBossChatSearchUrl(page.url())) throw new Error('搜索期间页面已离开 /web/chat/search；停止操作。');
+  await page.waitForFunction('!!document.querySelector(\'iframe[name="searchFrame"]\')', { timeout: SEARCH_FRAME_READY_TIMEOUT_MS, polling: 100 });
+  await page.waitForNetworkIdle({ idleTime: 1000, timeout: SEARCH_FRAME_READY_TIMEOUT_MS });
+  const token = randomUUID();
+  await page.waitForFunction(`(() => {
+    if (location.pathname !== "/web/chat/search") throw new Error("搜索期间页面已离开搜索页；停止操作。");
+    ${VISIBLE_SEARCH_IFRAME_SCRIPT}
+    const doc = iframe?.contentDocument;
+    if (!doc || !["interactive", "complete"].includes(doc.readyState)) return false;
+    return (() => {
+      const document = doc;
+      ${SEARCH_CANDIDATE_READER_SCRIPT}
+      const visible = el => {
+        if (!el || el.getBoundingClientRect().width <= 0 || el.getBoundingClientRect().height <= 0) return false;
+        for (let node = el; node; node = node.parentElement) {
+          const style = getComputedStyle(node);
+          if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+        }
+        return true;
+      };
+      if (!visible(iframe) || Array.from(document.querySelectorAll(".toast-con.toast-loading")).some(visible)) return false;
+      const input = document.querySelector(".search-input");
+      const job = norm(document.querySelector(".search-current-job")?.textContent);
+      const active = document.querySelector('.search-job-list-C li[ka="search_select_job"].active');
+      const activeJob = active?.querySelector(".job-name");
+      const selectedJob = activeJob ? norm(activeJob.textContent) : norm(active?.textContent);
+      const cityLabel = norm(document.querySelector(".city-wrap .city")?.textContent);
+      const city = cityLabel === "城市" ? "" : cityLabel;
+      const expected = ${JSON.stringify(expected)};
+      const list = document.querySelector(".geek-list-wrap, .card-list");
+      if (!input || !list || !job || selectedJob !== job) return false;
+      if (expected.job !== undefined && job !== expected.job) return false;
+      if (expected.keyword !== undefined && input.value !== expected.keyword) return false;
+      if (expected.city !== undefined && city !== expected.city) return false;
+      const cards = Array.from(document.querySelectorAll(".geek-info-card"));
+      if (${phase === 'results'} && cards.length === 0 && !visible(document.querySelector(".empty-tips"))) return false;
+      const signature = JSON.stringify({ job, keyword: input.value, city, candidates: ${phase === 'results'} ? cards.map(readCandidate) : [] });
+      const previous = window.__bossCliSearchSettling;
+      if (!previous || previous.token !== ${JSON.stringify(token)} || previous.doc !== doc || previous.signature !== signature) {
+        window.__bossCliSearchSettling = { token: ${JSON.stringify(token)}, doc, signature, since: Date.now() };
+        return false;
+      }
+      return Date.now() - previous.since >= 500;
+    })();
+  })()`, { timeout: SEARCH_FRAME_READY_TIMEOUT_MS, polling: 100 });
+  if (!isBossChatSearchUrl(page.url())) throw new Error('搜索期间页面已离开 /web/chat/search；停止操作。');
   const frame = await getSearchFrame(page);
-  await ensureSearchFrameReady(frame);
+  const stillBound = await page.evaluate(`(() => {
+    ${VISIBLE_SEARCH_IFRAME_SCRIPT}
+    return iframe?.contentDocument === window.__bossCliSearchSettling?.doc;
+  })()`);
+  if (!stillBound || await getSearchFrame(page) !== frame) throw new Error('搜索结果 frame 已重建；请重新执行 boss search。');
   return frame;
 }
 
@@ -259,54 +346,72 @@ export async function assertNormalSearchPageReadyForPreview(page: Page): Promise
   return frame;
 }
 
-async function runKeywordSearch(frame: Frame, keyword: string): Promise<void> {
-  const kwLiteral = JSON.stringify(keyword);
-  const ok = (await frame.evaluate(`(() => {
-    const input = document.querySelector(".search-input");
-    if (!(input instanceof HTMLInputElement)) return false;
-    const kw = ${kwLiteral};
-    input.focus();
-    input.value = kw;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent("keydown", {
-      key: "Enter",
-      code: "Enter",
-      keyCode: 13,
-      which: 13,
-      bubbles: true,
-      cancelable: true,
-    }));
-    input.dispatchEvent(new KeyboardEvent("keyup", {
-      key: "Enter",
-      code: "Enter",
-      keyCode: 13,
-      which: 13,
-      bubbles: true,
-      cancelable: true,
-    }));
-    return true;
-  })()`)) as boolean;
-  if (!ok) {
-    throw new Error('未找到常规搜索关键词输入框（.search-input）。');
-  }
-
-  /**
-   * ⚠️ 判据必须**内联**进脚本字符串，不能走 `waitForFunction(fn, opts, arg)` 的入参。
-   * puppeteer 对**字符串**形式的 pageFunction 是直接当表达式求值的，后面的入参会被静默丢弃：
-   * `"((kw) => ...)"` 求值结果是个函数对象 → 恒为真 → 这个等待直接变成空转。
-   * （本机实测：`waitForFunction("((x) => x === 'NEVER')", {timeout:3000}, 'NO')` 6ms 就通过了。）
-   * 而 AGENTS.md 又要求 evaluate 一律用字符串脚本，所以只有 JSON.stringify 内联这一条路。
-   */
-  await frame.waitForFunction(
-    `(() => {
+export async function runKeywordSearch(page: Page, frame: Frame, keyword: string, expected: ExpectedSearchState): Promise<{ frame: Frame; candidateIds: string[] }> {
+  const selected = selectedSearchJobs.get(page);
+  const jobId = expected.job === '不限职位' ? '' : selected && selected.label === expected.job ? selected.id : undefined;
+  if (jobId === undefined) throw new Error('缺少当前已选岗位与请求 jobId 的绑定证据；停止关键词搜索。');
+  const pending = new Set<HTTPRequest>();
+  let resolveResult!: (value: HTTPResponse) => void;
+  let rejectResult!: (error: Error) => void;
+  const result = new Promise<HTTPResponse>((resolve, reject) => { resolveResult = resolve; rejectResult = reject; });
+  const started = (request: HTTPRequest) => {
+    const url = new URL(request.url());
+    if (request.frame() === frame && url.origin === 'https://www.zhipin.com' &&
+        url.pathname === '/wapi/zpitem/web/boss/search/geeks.json' &&
+        url.searchParams.get('keywords') === keyword && url.searchParams.get('jobId') === jobId && url.searchParams.get('page') === '1') pending.add(request);
+  };
+  const responded = (response: HTTPResponse) => { if (pending.has(response.request())) resolveResult(response); };
+  page.on('request', started);
+  page.on('response', responded);
+  const timeout = setTimeout(() => rejectResult(new Error('没有等到与本次关键词及岗位绑定的结果响应；停止搜索。')), SEARCH_FRAME_READY_TIMEOUT_MS);
+  try {
+    const [dispatched, response] = await Promise.all([frame.evaluate(`(() => {
       const input = document.querySelector(".search-input");
-      return input instanceof HTMLInputElement && input.value === ${kwLiteral};
-    })()`,
-    { timeout: 5_000 },
-  );
-  await sleepRandom(SEARCH_RESULT_SETTLE_MS.min, SEARCH_RESULT_SETTLE_MS.max);
-  await ensureSearchFrameReady(frame);
+      if (!(input instanceof HTMLInputElement)) throw new Error("未找到搜索关键词输入框。");
+      input.focus(); input.value = ${JSON.stringify(keyword)};
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      ["keydown", "keyup"].forEach(type => input.dispatchEvent(new KeyboardEvent(type, {
+        key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true,
+      })));
+      return true;
+    })()`), result]);
+    if (!dispatched) throw new Error('搜索关键词事件未触发；停止搜索。');
+    if (response.status() < 200 || response.status() >= 300) throw new Error(`搜索结果 HTTP ${response.status()}；停止搜索。`);
+    const payload = await response.json();
+    if (payload?.code !== 0 || !Array.isArray(payload?.zpData?.geeks) || payload.zpData.page !== 1) {
+      throw new Error(`搜索结果业务状态或数据结构异常（code=${payload?.code}）；停止搜索。`);
+    }
+    const ids = payload.zpData.geeks.map((geek: { geekCard?: { encryptGeekId?: unknown } }) => geek?.geekCard?.encryptGeekId);
+    if (ids.some((id: unknown) => typeof id !== 'string' || !id.trim()) || new Set(ids).size !== ids.length) {
+      throw new Error('结果响应缺少唯一候选人ID；停止搜索。');
+    }
+    try {
+      await page.waitForFunction(`(() => {
+        if (location.pathname !== "/web/chat/search") throw new Error("搜索期间页面已离开搜索页。");
+        ${VISIBLE_SEARCH_IFRAME_SCRIPT}
+        const doc = iframe?.contentDocument;
+        if (!doc) return false;
+        const expectedIds = ${JSON.stringify(ids)};
+        const actualIds = Array.from(doc.querySelectorAll(".geek-info-card")).map(card => card.__vue__?.$props?.geek?.geekCard?.encryptGeekId);
+        return actualIds.length === expectedIds.length && actualIds.every((id, i) => id === expectedIds[i]);
+      })()`, { timeout: SEARCH_FRAME_READY_TIMEOUT_MS, polling: 100 });
+    } catch (error) {
+      throw new Error(`本次搜索结果候选人ID未应用到当前列表：${error instanceof Error ? error.message : String(error)}`);
+    }
+    const resultFrame = await settleNormalSearchFrame(page, { ...expected, keyword }, 'results');
+    const applied = await resultFrame.evaluate(`(() => {
+      const expectedIds = ${JSON.stringify(ids)};
+      const actualIds = Array.from(document.querySelectorAll(".geek-info-card")).map(card => card.__vue__?.$props?.geek?.geekCard?.encryptGeekId);
+      return actualIds.length === expectedIds.length && actualIds.every((id, i) => id === expectedIds[i]);
+    })()`);
+    if (!applied) throw new Error('当前搜索列表候选人ID与本次结果响应不一致；未创建搜索快照。');
+    return { frame: resultFrame, candidateIds: ids };
+  } finally {
+    clearTimeout(timeout);
+    page.off('request', started);
+    page.off('response', responded);
+  }
 }
 
 async function readNormalSearchKeyword(frame: Frame): Promise<string> {
@@ -330,18 +435,16 @@ export async function readNormalSearchSelectedJobLabel(frame: Frame): Promise<st
  * 在常规搜索页（iframe）切换当前岗位。岗位选项常驻 `.job-name`（即账号自己的开放职位），
  * 模糊匹配 keyword 后点击，等待 `.search-current-job` 变更。keyword 为空则返回当前岗位。
  */
-export async function selectNormalSearchJob(frame: Frame, keyword: string): Promise<string> {
+export async function selectNormalSearchJob(frame: Frame, keyword: string, page?: Page): Promise<string> {
   const kw = keyword.trim();
   if (!kw) {
     return readNormalSearchSelectedJobLabel(frame);
   }
-  const before = await readCurrentSearchJob(frame);
   const kwLiteral = JSON.stringify(kw);
 
   // 岗位下拉的选项（.job-name）常驻 DOM，但先点触发器展开以兼容折叠态。
   await frame.evaluate(`(() => {
-    const h = document.querySelector(".search-job-list-C .ui-dropmenu-label")
-      || document.querySelector(".ui-dropmenu-label");
+    const h = document.querySelector(".search-job-list-C .ui-dropmenu-label");
     if (h instanceof HTMLElement) {
       h.scrollIntoView({ block: "center", inline: "nearest" });
       h.click();
@@ -349,44 +452,65 @@ export async function selectNormalSearchJob(frame: Frame, keyword: string): Prom
   })()`);
   await sleepRandom(JOB_SWITCH_SETTLE_MS.min, JOB_SWITCH_SETTLE_MS.max);
 
-  const picked = (await frame.evaluate(`(() => {
-    const kw = ${kwLiteral};
-    const norm = (v) => (v ?? "").replace(/\\s+/g, "").trim().toLowerCase();
-    const items = Array.from(document.querySelectorAll(".job-name"));
-    if (items.length === 0) return { ok: false, reason: "empty" };
-    const target = items.find((el) => norm(el.textContent).includes(norm(kw)));
-    if (!(target instanceof HTMLElement)) {
-      return { ok: false, reason: "not_found", available: items.map((el) => (el.textContent ?? "").replace(/\\s+/g, " ").trim()) };
+  let selectedId: string | undefined;
+  const recordJob = (request: HTTPRequest) => {
+    const url = new URL(request.url());
+    if (request.frame() === frame && url.origin === 'https://www.zhipin.com' && url.pathname === '/wapi/zpitem/web/boss/search/getFilterConditions.json') {
+      const id = url.searchParams.get('encryptJobId');
+      if (id) selectedId = id;
     }
-    const label = (target.textContent ?? "").replace(/\\s+/g, " ").trim();
-    target.scrollIntoView({ block: "center", inline: "nearest" });
-    target.click();
-    return { ok: true, label };
-  })()`)) as { ok: boolean; label?: string; reason?: string; available?: string[] };
-
-  if (!picked.ok) {
-    if (picked.reason === 'not_found') {
-      const avail = (picked.available ?? []).join('｜');
-      throw new Error(`未找到匹配岗位“${kw}”。可选岗位：${avail || '（空）'}`);
-    }
-    throw new Error('未找到常规搜索岗位下拉选项（.job-name）。');
-  }
-
-  const label = picked.label ?? kw;
+  };
+  page?.on('request', recordJob);
   try {
-    // 判据内联，理由同 runKeywordSearch：字符串 pageFunction 收不到入参。
-    await frame.waitForFunction(
-      `(() => {
-        const cur = (document.querySelector(".search-current-job")?.textContent ?? "").replace(/\\s+/g, " ").trim();
-        return cur.length > 0 && cur !== ${JSON.stringify(before)};
-      })()`,
-      { timeout: 8_000 },
-    );
-  } catch {
-    // 当前岗位文案未变（可能本就是该岗）——不阻断，返回读到的 label。
+    const picked = (await frame.evaluate(`(() => {
+      const kw = ${kwLiteral};
+      const norm = (v) => (v ?? "").replace(/\\s+/g, "").trim().toLowerCase();
+      const items = Array.from(document.querySelectorAll('.search-job-list-C li[ka="search_select_job"] .job-name'));
+      if (items.length === 0) return { ok: false, reason: "empty" };
+      const matches = items.filter((el) => norm(el.textContent).includes(norm(kw)));
+      if (matches.length > 1) return { ok: false, reason: "ambiguous", available: matches.map(el => (el.textContent ?? "").trim()) };
+      const target = matches[0];
+      if (!(target instanceof HTMLElement)) {
+        return { ok: false, reason: "not_found", available: items.map((el) => (el.textContent ?? "").replace(/\\s+/g, " ").trim()) };
+      }
+      const label = (target.textContent ?? "").replace(/\\s+/g, " ").trim();
+      target.scrollIntoView({ block: "center", inline: "nearest" });
+      target.click();
+      return { ok: true, label };
+    })()`)) as { ok: boolean; label?: string; reason?: string; available?: string[] };
+
+    if (!picked.ok) {
+      if (picked.reason === 'ambiguous') throw new Error(`岗位关键词命中多人选项，请使用完整职位名称：${(picked.available ?? []).join('｜')}`);
+      if (picked.reason === 'not_found') {
+        const avail = (picked.available ?? []).join('｜');
+        throw new Error(`未找到匹配岗位“${kw}”。可选岗位：${avail || '（空）'}`);
+      }
+      throw new Error('未找到常规搜索岗位下拉选项（.job-name）。');
+    }
+
+    const label = picked.label ?? kw;
+    const selectedFrame = page ? await settleNormalSearchFrame(page, { job: label }) : frame;
+    await waitForSelectedSearchJob(selectedFrame, label);
+
+    await sleepRandom(JOB_SWITCH_SETTLE_MS.min, JOB_SWITCH_SETTLE_MS.max);
+    if (page) {
+      if (!selectedId) throw new Error('已选岗位缺少 getFilterConditions 请求绑定；停止搜索。');
+      selectedSearchJobs.set(page, { label, id: selectedId });
+    }
+    return label;
+  } finally {
+    page?.off('request', recordJob);
   }
-  await sleepRandom(JOB_SWITCH_SETTLE_MS.min, JOB_SWITCH_SETTLE_MS.max);
-  return label;
+
+}
+
+async function waitForSelectedSearchJob(frame: Frame, label: string): Promise<void> {
+  await frame.waitForFunction(`(() => {
+    const norm = v => (v ?? "").replace(/\\s+/g, " ").trim();
+    return norm(document.querySelector(".search-current-job")?.textContent) === ${JSON.stringify(label)};
+  })()`, { timeout: 8_000, polling: 100 });
+  const actual = await readCurrentSearchJob(frame);
+  if (actual !== label) throw new Error(`搜索岗位未生效：期望「${label}」，实际「${actual}」。`);
 }
 
 /**
@@ -395,15 +519,14 @@ export async function selectNormalSearchJob(frame: Frame, keyword: string): Prom
  * 它是岗位下拉的第一项，但**不带 `.job-name`**（那个 class 只给真实职位用），
  * 所以 `selectNormalSearchJob` 的选择器扫不到它，得单独按 `li[ka="search_select_job"]` 找。
  */
-export async function selectNormalSearchAnyJob(frame: Frame): Promise<string> {
+export async function selectNormalSearchAnyJob(frame: Frame, page?: Page): Promise<string> {
   const current = await readCurrentSearchJob(frame);
-  if (current.includes('不限职位')) {
+  if (current === '不限职位') {
     return current;
   }
 
   await frame.evaluate(`(() => {
-    const h = document.querySelector(".search-job-list-C .ui-dropmenu-label")
-      || document.querySelector(".ui-dropmenu-label");
+    const h = document.querySelector(".search-job-list-C .ui-dropmenu-label");
     if (h instanceof HTMLElement) {
       h.scrollIntoView({ block: "center", inline: "nearest" });
       h.click();
@@ -413,7 +536,7 @@ export async function selectNormalSearchAnyJob(frame: Frame): Promise<string> {
 
   const ok = (await frame.evaluate(`(() => {
     const items = Array.from(document.querySelectorAll('li[ka="search_select_job"]'));
-    const target = items.find((el) => (el.textContent ?? "").replace(/\\s+/g, "").includes("不限职位"));
+    const target = items.find((el) => (el.textContent ?? "").replace(/\\s+/g, "").trim() === "不限职位");
     if (!(target instanceof HTMLElement)) return false;
     target.scrollIntoView({ block: "center", inline: "nearest" });
     target.click();
@@ -424,7 +547,17 @@ export async function selectNormalSearchAnyJob(frame: Frame): Promise<string> {
     throw new Error('未找到岗位下拉里的「不限职位」项（li[ka="search_select_job"]）。');
   }
   await sleepRandom(JOB_SWITCH_SETTLE_MS.min, JOB_SWITCH_SETTLE_MS.max);
-  return (await readCurrentSearchJob(frame)) || '不限职位';
+  const selectedFrame = page ? await settleNormalSearchFrame(page, { job: '不限职位' }) : frame;
+  await waitForSelectedSearchJob(selectedFrame, '不限职位');
+  return '不限职位';
+}
+
+export async function prepareNormalSearchJob(page: Page, frame: Frame, keyword: string): Promise<{ frame: Frame; label: string }> {
+  await selectNormalSearchAnyJob(frame, page);
+  let current = await settleNormalSearchFrame(page, { job: '不限职位' });
+  const label = keyword ? await selectNormalSearchJob(current, keyword, page) : '不限职位';
+  current = await settleNormalSearchFrame(page, { job: label });
+  return { frame: current, label };
 }
 
 /**
@@ -491,7 +624,6 @@ export async function selectNormalSearchCity(frame: Frame, city: string): Promis
     }
   })()`);
   await sleepRandom(CITY_SETTLE_MS.min, CITY_SETTLE_MS.max);
-  await input.click();
   await input.type(target, { delay: 90 });
 
   /**
@@ -501,7 +633,7 @@ export async function selectNormalSearchCity(frame: Frame, city: string): Promis
   try {
     await frame.waitForFunction(
       `(() => document.querySelectorAll(".city-box .search-result-item").length > 0)()`,
-      { timeout: CITY_SUGGEST_TIMEOUT_MS },
+      { timeout: CITY_SUGGEST_TIMEOUT_MS, polling: 100 },
     );
   } catch {
     throw new Error(
@@ -1138,7 +1270,16 @@ async function readOtherFilters(frame: Frame): Promise<string[]> {
  *
  * 已经全是默认态就跳过——少一次无谓点击就少一分自动化特征。
  */
-export async function resetNormalSearchFilters(frame: Frame): Promise<boolean> {
+export async function assertNormalSearchFiltersClear(frame: Frame): Promise<void> {
+  const [degree, exp, age, schools, others] = await Promise.all([
+    readSelectedDegree(frame), readSelectedExp(frame), readSelectedAge(frame), readSelectedSchools(frame), readOtherFilters(frame),
+  ]);
+  if (degree || exp || age || schools.length > 0 || others.length > 0) {
+    throw new Error(`清空筛选未生效：${[degree, exp, age, ...schools, ...others].filter(Boolean).join('｜')}；停止搜索。`);
+  }
+}
+
+export async function resetNormalSearchFilters(frame: Frame, page?: Page): Promise<boolean> {
   const dirty =
     (await readSelectedDegree(frame)) !== '' ||
     (await readSelectedExp(frame)) !== '' ||
@@ -1163,8 +1304,8 @@ export async function resetNormalSearchFilters(frame: Frame): Promise<boolean> {
     throw new Error(`未找到「清空筛选」按钮（.reset-btn），等了 ${FILTER_PANEL_TIMEOUT_MS / 1000}s。`);
   }
 
-  // 清空会让整个筛选区重渲染一遍，等它落定再去设新条件，否则后面的点击会扑空。
-  await frame.waitForFunction(
+  const resetFrame = page ? await settleNormalSearchFrame(page) : frame;
+  await resetFrame.waitForFunction(
     `(() => {
       const isDefault = (sel) => {
         const el = document.querySelector(sel);
@@ -1185,7 +1326,7 @@ export async function resetNormalSearchFilters(frame: Frame): Promise<boolean> {
         && isDefault(".age-list-ui .age-item.active")
         && schoolOk && sliderOk && ageOk;
     })()`,
-    { timeout: FILTER_PANEL_TIMEOUT_MS },
+    { timeout: FILTER_PANEL_TIMEOUT_MS, polling: 100 },
   );
   await sleepRandom(FILTER_SETTLE_MS.min, FILTER_SETTLE_MS.max);
   return true;
@@ -1341,7 +1482,7 @@ export async function selectNormalSearchMajors(frame: Frame, labels: string[]): 
       await input.type(label, { delay: 90 });
       try {
         await frame.waitForFunction(`(() => (${MAJOR_SUGGEST_ITEMS}).length > 0)()`, {
-          timeout: CITY_SUGGEST_TIMEOUT_MS,
+          timeout: CITY_SUGGEST_TIMEOUT_MS, polling: 100,
         });
       } catch {
         const blank = (await frame.evaluate(
@@ -1499,77 +1640,57 @@ export async function openNormalSearchResumePreview(frame: Frame, target: string
  */
 export const SEARCH_POOL_CONTACT_LABEL_PATTERN = '^(立即沟通|继续沟通|畅聊卡|畅聊|沟通|联系[Tt][Aa])';
 
-/**
- * 在搜索池按「序号 / 打码姓名 / 摘要关键词」定位卡片并点「畅聊卡 N/M」按钮。
- *
- * 搜索池姓名被平台打码（`崔**`），靠姓名精确定位不可靠，因此优先支持 1-based 序号
- * （与 `boss search` 输出的编号一致，仅在同一次列表内有效）；也允许用打码姓名或摘要关键词模糊命中。
- * 按钮先按旧类名 `button.btn-getcontact` 找，找不到再按 SEARCH_POOL_CONTACT_LABEL_PATTERN 的文案兜底。
- */
-async function clickSearchPoolContactButton(
-  frame: Frame,
-  locator: { index?: number; target?: string },
-): Promise<
-  | { kind: 'empty' }
-  | { kind: 'not_found'; hint: string[] }
-  | { kind: 'ambiguous'; hits: string[] }
-  | { kind: 'no_btn'; name: string; hint?: string[] }
+async function selectSearchPoolCandidate(frame: Frame, locator: { index?: number; target?: string }): Promise<SearchPoolSelection> {
+  return (await frame.evaluate(`(() => {
+    const frameBinding = window.__bossCliSearchFrameBinding;
+    if (!frameBinding) throw new Error("缺少当前搜索 frame 绑定；请重新执行 boss search。");
+    const searchWindow = window;
+    const searchDocument = document;
+    ${VALIDATE_SEARCH_SNAPSHOT_SCRIPT}
+    const wantIndex = ${JSON.stringify(locator.index ?? null)};
+    const raw = ${JSON.stringify((locator.target ?? '').trim())};
+    const loose = (v) => norm(v).replace(/[*＊\\s]/g, "").toLowerCase();
+    const key = loose(raw);
+    const matches = card => key && (loose(readCandidate(card).name).includes(key) || loose(readCandidate(card).summary).includes(key));
+    let index = wantIndex;
+    if (index !== null) {
+      if (!Number.isInteger(index) || index < 1 || index > cards.length) throw new Error("搜索快照中没有此序号。");
+      if (raw && !matches(cards[index - 1])) throw new Error("--index 与候选人关键词不匹配，目标冲突；未点击任何候选人。");
+    } else {
+      const hits = cards.map((card, i) => matches(card) ? i + 1 : null).filter(i => i !== null);
+      if (hits.length !== 1) throw new Error("搜索快照中关键词没有唯一匹配；请核对后用 --index 指定。");
+      index = hits[0];
+    }
+    const name = readCandidate(cards[index - 1]).name;
+    if (!name) throw new Error("搜索快照目标没有可核对的姓名；未点击候选人。");
+    return { snapshotId: snapshot.id, frameBinding, index, name };
+  })()`)) as SearchPoolSelection;
+}
+
+async function validateSearchPoolSelection(frame: Frame, selection: SearchPoolSelection): Promise<void> {
+  await frame.evaluate(`(() => { ${validatedSearchSelectionScript(selection)} })()`);
+}
+
+async function clickSearchPoolContactButton(frame: Frame, selection: SearchPoolSelection): Promise<
+  | { kind: 'no_btn'; name: string; hint: string[] }
   | { kind: 'disabled'; name: string; text: string }
   | { kind: 'clicked'; index: number; name: string; text: string; summary: string }
 > {
-  const indexLiteral = JSON.stringify(locator.index ?? null);
-  const targetLiteral = JSON.stringify((locator.target ?? '').trim());
   return (await frame.evaluate(`(() => {
-    const wantIndex = ${indexLiteral};
-    const raw = ${targetLiteral};
-    const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
-    const loose = (v) => norm(v).replace(/[*＊\\s]/g, "").toLowerCase();
-    const cards = Array.from(document.querySelectorAll(".geek-info-card"));
-    if (cards.length === 0) return { kind: "empty" };
-
-    const describe = (card, i) =>
-      (i + 1) + ". " + norm(card.querySelector(".name-label")?.textContent);
-
-    let picked = null;
-    let pickedIndex = -1;
-    if (wantIndex !== null) {
-      if (wantIndex < 1 || wantIndex > cards.length) {
-        return { kind: "not_found", hint: cards.map(describe) };
-      }
-      picked = cards[wantIndex - 1];
-      pickedIndex = wantIndex - 1;
-    } else {
-      const key = loose(raw);
-      const hits = [];
-      cards.forEach((card, i) => {
-        const name = loose(card.querySelector(".name-label")?.textContent);
-        const summary = loose(card.querySelector(".info-detail")?.textContent);
-        if ((key && name.includes(key)) || (key && summary.includes(key))) {
-          hits.push({ card, i });
-        }
-      });
-      if (hits.length === 0) return { kind: "not_found", hint: cards.map(describe) };
-      if (hits.length > 1) return { kind: "ambiguous", hits: hits.map((h) => describe(h.card, h.i)) };
-      picked = hits[0].card;
-      pickedIndex = hits[0].i;
-    }
-
-    const name = norm(picked.querySelector(".name-label")?.textContent);
-    const summary = norm(picked.querySelector(".info-detail")?.textContent).slice(0, 80);
-    // 平台 2026-10 改版：开聊按钮由 button.btn-getcontact（文案「畅聊卡 N/M」）
-    // 改为 button.btn.position-rights（文案「立即沟通(30/140)」）。先试旧类名，
-    // 再按文案兜底——同卡片另有「不感兴趣」按钮，不能盲取第一个 button。
+    ${validatedSearchSelectionScript(selection)}
+    const { name, summary } = readCandidate(picked);
     const contactByText = new RegExp(${JSON.stringify(SEARCH_POOL_CONTACT_LABEL_PATTERN)});
-    const btn =
-      picked.querySelector("button.btn-getcontact, .btn-getcontact") ||
-      Array.from(picked.querySelectorAll("button")).find((el) => contactByText.test(norm(el.textContent)));
-    if (!(btn instanceof HTMLElement)) return { kind: "no_btn", name, hint: Array.from(picked.querySelectorAll("button")).map((el) => norm(el.textContent)).filter(Boolean).slice(0, 8) };
+    const btn = Array.from(picked.querySelectorAll("button, .btn-getcontact"))
+      .find(el => contactByText.test(norm(el.textContent)));
+    if (!(btn instanceof HTMLElement)) return { kind: "no_btn", name, hint: Array.from(picked.querySelectorAll("button")).map(el => norm(el.textContent)).filter(Boolean).slice(0, 8) };
     const text = norm(btn.textContent);
-    const cls = btn.className || "";
-    if (/disabled|forbid|ban/i.test(cls) || btn.getAttribute("disabled") !== null) {
-      return { kind: "disabled", name, text };
-    }
+    if (/disabled|forbid|ban/i.test(btn.className || "") || btn.getAttribute("disabled") !== null) return { kind: "disabled", name, text };
     btn.scrollIntoView({ block: "center", inline: "nearest" });
+    (() => { ${validatedSearchSelectionScript(selection)} })();
+    if (!Array.from(picked.querySelectorAll("button, .btn-getcontact")).includes(btn) || norm(btn.textContent) !== text ||
+        /disabled|forbid|ban/i.test(btn.className || "") || btn.getAttribute("disabled") !== null) {
+      throw new Error("沟通按钮已变化；未点击。");
+    }
     btn.click();
     return { kind: "clicked", index: pickedIndex + 1, name, text, summary };
   })()`)) as never;
@@ -1649,7 +1770,7 @@ export async function ensureSearchPoolChatMode(page: Page, mode: 'account' | 'ca
   await page.waitForFunction(`(() => {
     const checked = document.querySelector(${JSON.stringify(CHAT_MODE_WRAP_SELECTOR)})?.querySelector(".chat-mode.checked");
     return new RegExp(${JSON.stringify(pattern)}).test((checked?.textContent ?? "").replace(/\\s+/g, " ").trim());
-  })()`, { timeout: 5000 });
+  })()`, { timeout: 5000, polling: 100 });
   const after = await readSearchPoolChatMode(page);
   if (!after.present || !matches(after.current)) throw new Error('开聊模式切换未生效；停止操作。');
   return after;
@@ -1660,41 +1781,19 @@ export async function ensureSearchPoolChatCardMode(page: Page): Promise<SearchPo
   return ensureSearchPoolChatMode(page, 'card');
 }
 
-/** 点开某张卡片的简历详情（右侧面板），返回该候选人打码姓名。 */
-async function openSearchPoolCardDetail(
-  frame: Frame,
-  locator: { index?: number; target?: string },
-): Promise<string> {
-  const indexLiteral = JSON.stringify(locator.index ?? null);
-  const targetLiteral = JSON.stringify((locator.target ?? '').trim());
-  const opened = (await frame.evaluate(`(() => {
-    const wantIndex = ${indexLiteral};
-    const raw = ${targetLiteral};
-    const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
-    const loose = (v) => norm(v).replace(/[*＊\\s]/g, "").toLowerCase();
-    const cards = Array.from(document.querySelectorAll(".geek-info-card"));
-    if (cards.length === 0) return "";
-    let picked = null;
-    if (wantIndex !== null) {
-      if (wantIndex < 1 || wantIndex > cards.length) return "";
-      picked = cards[wantIndex - 1];
-    } else {
-      const key = loose(raw);
-      const hits = cards.filter((card) =>
-        loose(card.querySelector(".name-label")?.textContent).includes(key) ||
-        loose(card.querySelector(".info-detail")?.textContent).includes(key));
-      if (hits.length !== 1) return "";
-      picked = hits[0];
-    }
-    const t = picked.querySelector(".name-label") || picked;
-    ["mousedown", "mouseup", "click"].forEach((ev) => t.dispatchEvent(new MouseEvent(ev, { bubbles: true })));
-    return norm(picked.querySelector(".name-label")?.textContent);
-  })()`)) as string;
-  if (!opened) {
-    throw new Error('未能打开候选人详情面板（姓名打码定位失败或卡片不存在）。');
-  }
+async function openSearchPoolCardDetail(frame: Frame, selection: SearchPoolSelection): Promise<void> {
+  await frame.evaluate(`(() => {
+    ${validatedSearchSelectionScript(selection)}
+    const nameLabel = picked.querySelector(".name-label");
+    if (!(nameLabel instanceof HTMLElement)) throw new Error("候选人详情入口不存在；未点击沟通按钮。");
+    ["mousedown", "mouseup", "click"].forEach(ev => {
+      (() => { ${validatedSearchSelectionScript(selection)} })();
+      if (picked.querySelector(".name-label") !== nameLabel) throw new Error("候选人详情入口已变化；未继续点击。");
+      nameLabel.dispatchEvent(new MouseEvent(ev, { bubbles: true }));
+    });
+  })()`);
   await sleepRandom(1200, 1800);
-  return opened;
+  await validateSearchPoolSelection(frame, selection);
 }
 
 /**
@@ -1717,33 +1816,47 @@ export function searchPoolDialogFunding(state: GreetCardDialogState): 'account' 
   return 'account';
 }
 
-async function readNormalSearchCandidates(frame: Frame): Promise<NormalSearchCandidate[]> {
+export async function captureSearchPoolSnapshot(frame: Frame, expectedCandidateIds?: string[], expectedState?: ExpectedSearchState): Promise<NormalSearchCandidate[]> {
   return (await frame.evaluate(`(() => {
-    const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
-    const unique = (items) => Array.from(new Set(items.map(norm).filter(Boolean)));
-    return Array.from(document.querySelectorAll(".geek-info-card")).map((card) => {
-      const labels = unique(Array.from(card.querySelectorAll(".card-label")).map((el) => el.textContent));
-      const tags = unique(
-        Array.from(card.querySelectorAll(".info-tags:not(.info-tags-measure) .info-tags-item"))
-          .map((el) => el.textContent),
-      );
-      const work = Array.from(card.querySelectorAll(".work-exp-box .work-exp-item"))
-        .map((el) => norm(el.textContent))
-        .filter(Boolean);
-      return {
-        name: norm(card.querySelector(".name-label")?.textContent),
-        active: norm(card.querySelector(".active-desc-text")?.textContent),
-        labels,
-        basicInfo: norm(card.querySelector(".info-labels")?.textContent),
-        summary: norm(card.querySelector(".info-detail")?.textContent),
-        tags,
-        expectation: norm(card.querySelector(".expect-exp-box")?.textContent),
-        work,
-        education: norm(card.querySelector(".edu-exp-box")?.textContent),
-        reason: norm(card.querySelector(".recommend-reason")?.textContent),
-        contactText: norm(card.querySelector(".btn-getcontact")?.textContent),
-      };
-    }).filter((item) => item.name);
+    ${SEARCH_CANDIDATE_READER_SCRIPT}
+    const expected = ${JSON.stringify(expectedState ?? null)};
+    if (expected) {
+      const topWindow = window.top;
+      if (topWindow.location.origin !== "https://www.zhipin.com" || topWindow.location.pathname.replace(/\\/+$/, "") !== "/web/chat/search") {
+        throw new Error("采集快照时主页面已离开搜索页；未创建搜索快照。");
+      }
+      const boundIframe = (() => {
+        const document = topWindow.document;
+        const window = topWindow;
+        ${VISIBLE_SEARCH_IFRAME_SCRIPT}
+        return iframe;
+      })();
+      if (!boundIframe || boundIframe.contentDocument !== document) throw new Error("采集快照时当前搜索 iframe 绑定已变化；未创建搜索快照。");
+      const job = norm(document.querySelector(".search-current-job")?.textContent);
+      const keyword = document.querySelector(".search-input")?.value;
+      const cityLabel = norm(document.querySelector(".city-wrap .city")?.textContent);
+      const city = cityLabel === "城市" ? "" : cityLabel;
+      if ((expected.job !== undefined && job !== expected.job) ||
+          (expected.keyword !== undefined && keyword !== expected.keyword) ||
+          (expected.city !== undefined && city !== expected.city)) {
+        throw new Error("采集快照时搜索条件已变化；未创建搜索快照。");
+      }
+    }
+    const cards = Array.from(document.querySelectorAll(".geek-info-card"));
+    const candidates = cards.map(readCandidate);
+    if (new Set(candidates.map(candidate => candidate.candidateId)).size !== candidates.length) throw new Error("搜索结果候选人ID重复；不能创建可靠快照。");
+    const expectedCandidateIds = ${JSON.stringify(expectedCandidateIds ?? null)};
+    if (expectedCandidateIds && (candidates.length !== expectedCandidateIds.length ||
+        candidates.some((candidate, i) => candidate.candidateId !== expectedCandidateIds[i]))) {
+      throw new Error("采集快照时当前候选人ID与本次结果响应不一致；未创建搜索快照。");
+    }
+    window.__bossCliSearchSnapshot = {
+      id: ${JSON.stringify(randomUUID())}, createdAt: Date.now(), cards,
+      fingerprints: candidates.map(candidate => JSON.stringify(candidate)),
+    };
+    return candidates.map((candidate, i) => ({ ...candidate,
+      contactText: norm(cards[i].querySelector(".btn-getcontact")?.textContent),
+    }));
   })()`)) as NormalSearchCandidate[];
 }
 
@@ -1808,20 +1921,16 @@ function renderNormalSearchCandidates(
 }
 
 export type SearchPoolGreetOptions = {
-  /** 1-based 序号，对应上一次 `boss search` 输出的编号（仅当次列表有效） */
+  /** 1-based 序号，绑定最近一次 search 的页面快照，15 分钟有效。 */
   index?: number;
   /** 打码姓名或摘要关键词 */
   target?: string;
   /** 弹层内改选职位（不传则用平台预选，通常即 `--job` 选中的岗位） */
   jobKeyword?: string;
-  /** true = 只走到弹层并取消，不发出招呼、不消耗畅聊卡 */
+  /** true = 点击沟通入口，确认弹层出现后取消，不点击确认。 */
   dryRun: boolean;
 };
 
-/**
- * 搜索池打招呼：定位卡片 → 点「畅聊卡 N/M」→ 处理「选择该牛人开聊职位」确认弹层。
- * dryRun 时读完弹层就点「取消」，不消耗额度；否则点 `boss-btn-primary`（不可逆）。
- */
 export async function greetSearchPoolOnPage(
   page: Page,
   options: SearchPoolGreetOptions,
@@ -1840,23 +1949,13 @@ export async function greetSearchPoolOnPage(
         }
       }
       // dry-run 只预览当前模式，不能修改全局持久选择。
-      let candidateName = '';
+      const selection = await selectSearchPoolCandidate(frame, { index, target });
       if (!dryRun) {
-        candidateName = await openSearchPoolCardDetail(frame, { index, target });
+        await openSearchPoolCardDetail(frame, selection);
         await ensureSearchPoolChatMode(page, 'account');
       }
-      const clicked = await clickSearchPoolContactButton(frame, candidateName ? { target: candidateName } : { index, target });
+      const clicked = await clickSearchPoolContactButton(frame, selection);
       switch (clicked.kind) {
-        case 'empty':
-          throw new Error('搜索池列表为空，无法打招呼。请先执行 boss search。');
-        case 'not_found':
-          throw new Error(
-            `未在搜索池定位到目标。当前列表：\n${clicked.hint.join('\n')}`,
-          );
-        case 'ambiguous':
-          throw new Error(
-            `关键词命中多人，请改用 --index 精确指定：\n${clicked.hits.join('\n')}`,
-          );
         case 'no_btn':
           throw new Error(
             `候选人 ${clicked.name} 卡片上没有「畅聊」按钮。\n卡片内按钮：${(clicked.hint ?? []).join(' | ')}`,
@@ -1867,7 +1966,6 @@ export async function greetSearchPoolOnPage(
           break;
       }
 
-      if (candidateName && clicked.name !== candidateName) throw new Error('候选人列表已变化；未确认。');
       const head = `目标：#${clicked.index} ${clicked.name}｜按钮：${clicked.text}`;
       let dialog = await waitForGreetCardDialog(page, GREET_CARD_DIALOG_WAIT_MS);
       if (!dialog.present) {
@@ -1903,8 +2001,8 @@ export async function greetSearchPoolOnPage(
       if (funding === 'exhausted') {
         if (!(await cancelGreetCardDialog(page)) || (await readGreetCardDialog(page)).present) throw new Error('权益不足但无法关闭弹层；未切卡、未重试。');
         await ensureSearchPoolChatMode(page, 'card');
-        const retried = await clickSearchPoolContactButton(frame, { target: candidateName });
-        if (retried.kind !== 'clicked' || retried.name !== candidateName) throw new Error('切卡后候选人定位失败；未确认、未继续重试。');
+        const retried = await clickSearchPoolContactButton(frame, selection);
+        if (retried.kind !== 'clicked' || retried.name !== selection.name) throw new Error('切卡后候选人定位失败；未确认、未继续重试。');
         dialog = await waitForGreetCardDialog(page, GREET_CARD_DIALOG_WAIT_MS);
         if ((jobKeyword ?? '').trim()) await selectGreetCardDialogJob(page, jobKeyword!.trim());
         Object.assign(state, await readGreetCardDialog(page));
@@ -1922,7 +2020,13 @@ export async function greetSearchPoolOnPage(
         await cancelGreetCardDialog(page);
         throw new Error('没有可验证的已选职位；未确认。');
       }
-      const confirmed = await confirmGreetCardDialog(page, state);
+      try {
+        await validateSearchPoolSelection(frame, selection);
+      } catch (error) {
+        await cancelGreetCardDialog(page);
+        throw error;
+      }
+      const confirmed = await confirmGreetCardDialog(page, state, selection);
       if (!confirmed) {
         await cancelGreetCardDialog(page);
         throw new Error('确认按钮不可用或弹层状态已变化，已尝试取消；未重试。');
@@ -1972,7 +2076,7 @@ export type NormalSearchOptions = {
   majors?: string[];
 };
 
-export async function runNormalSearch(opts: NormalSearchOptions = {}): Promise<string> {
+export async function runNormalSearch(opts: NormalSearchOptions = {}, withSessionPage = withBossSessionPage): Promise<string> {
   const kw = (opts.keyword ?? '').trim();
   const jobKw = (opts.jobKeyword ?? '').trim();
   const city = (opts.city ?? defaultSearchCityFromEnv()).trim();
@@ -1999,31 +2103,36 @@ export async function runNormalSearch(opts: NormalSearchOptions = {}): Promise<s
     throw new Error('常规搜索关键词最多 20 个字符。');
   }
   try {
-    return await withBossSessionPage(async (page) => {
-      const frame = await ensureInNormalSearchPage(page);
+    return await withSessionPage(async (page) => {
+      await invalidateSearchSnapshots(page);
+      let frame = await ensureInNormalSearchPage(page);
+      if (!kw) {
+        return '未提供关键词，本次仅进入搜索页，未执行查询。\n已清除旧搜索快照。请提供关键词执行 boss search <关键词>。';
+      }
 
       /**
        * 岗位：给了关键字就按关键字选，**没给就切「不限职位」**。
        * 以前没给是「保持上次的岗位」——跨命令沿用上一次的状态，结果不可预测，
        * 同一条命令跑两次可能搜的是两个池子。
        */
-      if (jobKw) {
-        await selectNormalSearchJob(frame, jobKw);
-      } else {
-        await selectNormalSearchAnyJob(frame);
-      }
+      const selectedJob = await prepareNormalSearchJob(page, frame, jobKw);
+      const expectedJob = selectedJob.label;
+      frame = selectedJob.frame;
 
       /**
        * 清空上一轮残留的筛选条件，**再**按本次参数重设。
        * 不清的话「这次怎么只有 3 个人」永远得靠猜是不是上次的条件还挂着。
        * 必须在设条件之前——它会把学历 / 院校 / 其他筛选一起归零。
        */
-      await resetNormalSearchFilters(frame);
+      await resetNormalSearchFilters(frame, page);
+      frame = await settleNormalSearchFrame(page, { job: expectedJob });
+      await assertNormalSearchFiltersClear(frame);
 
       // 顺序固定：岗位 → 清空 → 城市 → 学历 → 院校 → 其他筛选 → 关键词。
       // 筛选条件都在关键词之前落定，否则先搜后筛会多打一次列表请求。
       if (city) {
         await selectNormalSearchCity(frame, city);
+        frame = await settleNormalSearchFrame(page, { job: expectedJob, city });
       }
       if (degree) {
         await selectNormalSearchDegree(frame, degree);
@@ -2059,9 +2168,8 @@ export async function runNormalSearch(opts: NormalSearchOptions = {}): Promise<s
         await selectNormalSearchMajors(frame, majors);
       }
 
-      if (kw) {
-        await runKeywordSearch(frame, kw);
-      }
+      const result = await runKeywordSearch(page, frame, kw, { job: expectedJob, ...(city ? { city } : {}) });
+      frame = await settleNormalSearchFrame(page, { job: expectedJob, keyword: kw, ...(city ? { city } : {}) }, 'results');
 
       // 回显一律读页面实时状态，不打入参——见 readSelectedDegree 的注释。
       const [
@@ -2073,7 +2181,6 @@ export async function runNormalSearch(opts: NormalSearchOptions = {}): Promise<s
         currentExp,
         currentAge,
         others,
-        candidates,
       ] = await Promise.all([
         readNormalSearchKeyword(frame),
         readCurrentSearchJob(frame),
@@ -2083,8 +2190,12 @@ export async function runNormalSearch(opts: NormalSearchOptions = {}): Promise<s
         readSelectedExp(frame),
         readSelectedAge(frame),
         readOtherFilters(frame),
-        readNormalSearchCandidates(frame),
       ]);
+      if (currentJob !== expectedJob || (kw && currentKeyword !== kw) || (city && currentCity !== city)) {
+        throw new Error('读取结果时搜索条件已变化；未创建搜索快照。');
+      }
+      if (!isBossChatSearchUrl(page.url()) || await getSearchFrame(page) !== frame) throw new Error('读取结果时页面或搜索 frame 已变化；未创建搜索快照。');
+      const candidates = await captureSearchPoolSnapshot(frame, result.candidateIds, { job: expectedJob, keyword: kw, ...(city ? { city } : {}) });
       return renderNormalSearchCandidates(candidates, {
         keyword: currentKeyword || kw,
         job: currentJob,
@@ -2098,6 +2209,6 @@ export async function runNormalSearch(opts: NormalSearchOptions = {}): Promise<s
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    throw new Error(`读取常规搜索列表失败：${message}`);
+    throw new Error(`读取常规搜索列表失败：${message}`, { cause: e });
   }
 }

@@ -86,21 +86,21 @@ async function fileExists(target) {
         return false;
     }
 }
-async function readJobsFromFrame(frame) {
+export async function readJobsFromFrame(frame) {
     return (await frame.evaluate(`(() => {
       const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
-      const rows = Array.from(document.querySelectorAll(".job-jobInfo-warp"));
+      const rows = Array.from(document.querySelectorAll(".job-item-container"));
       const jobs = rows.map((el) => {
-        const statusText = norm(el.querySelector(".job-status-wrapper .status-box")?.textContent);
-        const labelText = norm(el.querySelector(".job-title .label-common")?.textContent);
-        const meta = Array.from(el.querySelectorAll(".job-main-info-wrapper .info-labels span"))
+        const statusText = norm(el.querySelector(".status-box")?.textContent);
+        const labelText = norm(el.querySelector(".job-labels .base-label")?.textContent);
+        const meta = Array.from(el.querySelectorAll(".info-labels .divider-label-text"))
           .map((x) => norm(x.textContent))
           .filter(Boolean);
-        const nums = Array.from(el.querySelectorAll(".job-about-num-wrapper .inner-box .num"))
+        const nums = Array.from(el.querySelectorAll(".job-about-num-wrapper .num"))
           .map((x) => norm(x.textContent));
         return {
           id: norm(el.getAttribute("data-id")),
-          title: norm(el.querySelector(".job-title a")?.textContent),
+          title: norm(el.querySelector(".job-name")?.textContent),
           label: labelText,
           status: statusText,
           meta,
@@ -123,35 +123,18 @@ async function readJobsFromFrame(frame) {
 }
 async function readJobsFromPageAnyFrame(page) {
     const main = await readJobsFromFrame(page.mainFrame());
-    if (main.rows > 0 || main.totalText.length > 0) {
-        return {
-            frame: page.mainFrame(),
-            data: main,
-            fromFrame: false,
-            frameUrl: main.url,
-            mainState: main,
-        };
-    }
-    const frames = page.frames();
-    for (const frame of frames) {
-        if (frame === page.mainFrame()) {
-            continue;
-        }
-        try {
-            const state = await readJobsFromFrame(frame);
-            if (state.rows > 0 || state.totalText.length > 0) {
-                return {
-                    frame,
-                    data: state,
-                    fromFrame: true,
-                    frameUrl: state.url,
-                    mainState: main,
-                };
-            }
-        }
-        catch {
-            // ignore cross-origin / detached frames
-        }
+    if (!isBossChatJobListUrl(main.url))
+        throw new Error('读取职位期间页面已离开 /web/chat/job/list；停止操作。');
+    const frames = page.frames().filter(frame => {
+        const url = new URL(frame.url());
+        return url.hostname === 'www.zhipin.com' && url.pathname === '/web/frame/job_v2/list';
+    });
+    if (frames.length > 1)
+        throw new Error('找到多个职位列表 frame；无法确定当前职位来源。');
+    const frame = frames[0];
+    if (frame) {
+        const state = await readJobsFromFrame(frame);
+        return { frame, data: state, fromFrame: true, frameUrl: state.url, mainState: main };
     }
     return {
         frame: page.mainFrame(),
@@ -161,11 +144,13 @@ async function readJobsFromPageAnyFrame(page) {
         mainState: main,
     };
 }
-async function waitForJobRowsReady(page, timeoutMs) {
+export async function waitForJobRowsReady(page, timeoutMs) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
         const state = await readJobsFromPageAnyFrame(page);
-        if (state.data.rows > 0 || state.data.totalText.length > 0) {
+        const total = state.data.totalText.match(/共\s*(\d+)\s*个职位/);
+        const parsedAllRows = state.data.rows > 0 && state.data.jobs.every(job => job.title.length > 0);
+        if (state.fromFrame && (parsedAllRows || (total?.[1] === '0' && state.data.rows === 0))) {
             return state;
         }
         await sleepRandom(260, 520);
@@ -189,19 +174,20 @@ async function clickEditForJob(frame, job) {
       const jobId = ${targetId};
       const title = ${targetTitle};
       const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
-      const rows = Array.from(document.querySelectorAll(".job-jobInfo-warp"));
+      const rows = Array.from(document.querySelectorAll(".job-item-container"));
       let row = null;
       if (jobId) {
         row = rows.find((el) => norm(el.getAttribute("data-id")) === jobId) ?? null;
       }
       if (!row && title) {
         row = rows.find((el) => {
-          const t = norm(el.querySelector(".job-title a")?.textContent);
+          const t = norm(el.querySelector(".job-name")?.textContent);
           return t === title;
         }) ?? null;
       }
       if (!row) return false;
-      const editBtn = row.querySelector(".position-edit");
+      const editBtn = Array.from(row.querySelectorAll(".operation-container .operate-btn"))
+        .find(el => norm(el.textContent) === "编辑");
       if (!(editBtn instanceof HTMLElement)) return false;
       editBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
       editBtn.click();
@@ -352,7 +338,6 @@ export async function runListOpenPositions(deps = {}) {
                 throw new Error('通过侧边栏“职位管理”进入职位页失败，请确认已登录并可访问 /web/chat/job/list。');
             }
             const ready = await waitForJobRowsReady(page, 16_000);
-            await sleepRandom(350, 920);
             const jobs = ready.data.jobs.filter((it) => it.title.length > 0);
             const jobLines = jobs.map((it, idx) => {
                 const info = it.meta.length > 0 ? it.meta.join('｜') : '信息缺失';

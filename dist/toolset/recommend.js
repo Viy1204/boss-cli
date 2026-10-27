@@ -1,3 +1,4 @@
+import { TimeoutError } from 'puppeteer-core';
 import { JOB_SEARCH_ACTION_GAP_MS, JOB_SELECT_ACTION_GAP_MS, RESUME_PREVIEW_OPEN_GAP_MS, sleepRandom, } from '../browser/index.js';
 import { withBossSessionPage } from '../common/boss_session_page.js';
 import { ensurePage } from '../common/ensure_page.js';
@@ -48,7 +49,7 @@ async function ensureRecommendFrameReady(frame) {
       if (document.querySelector(sel)) return true;
       const root = document.querySelector(".card-list, .geek-list-wrap .geek-list");
       return !!root;
-    })()`, { timeout: 18_000 });
+    })()`, { timeout: 18_000, polling: 100 });
 }
 async function readCurrentRecommendJobLabel(frame) {
     return (await frame.evaluate(`(() => {
@@ -66,7 +67,7 @@ async function waitForRecommendJobDropdownReady(frame) {
         return false;
       }
       return !!options.querySelector(".top-chat-search .chat-job-search");
-    })()`, { timeout: 8_000 });
+    })()`, { timeout: 8_000, polling: 100 });
 }
 async function waitForRecommendJobSearchResults(frame, keyword) {
     // 关键词内联，不能走入参：字符串 pageFunction 收不到，判据恒为真、等待变空转。详见 AGENTS.md。
@@ -80,14 +81,14 @@ async function waitForRecommendJobSearchResults(frame, keyword) {
         const label = norm(el.querySelector(".label")?.textContent || el.textContent || "");
         return label.includes(norm(kw));
       });
-    })()`, { timeout: 10_000 });
+    })()`, { timeout: 10_000, polling: 100 });
 }
 async function waitForRecommendJobSelected(frame, expectedLabel) {
     await frame.waitForFunction(`(() => {
       const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
       const current = norm(document.querySelector(".job-selecter-wrap .ui-dropmenu-label")?.textContent);
       return !!current && current === ${JSON.stringify(expectedLabel)};
-    })()`, { timeout: 10_000 });
+    })()`, { timeout: 10_000, polling: 100 });
     await ensureRecommendFrameReady(frame);
 }
 export async function selectRecommendJob(frame, keyword) {
@@ -149,14 +150,24 @@ export async function selectRecommendJob(frame, keyword) {
     return label;
 }
 export async function ensureInRecommendPage(page) {
-    await ensurePage(page, {
-        name: '推荐列表页',
-        targetUrl: BOSS_CHAT_RECOMMEND_URL,
-        matches: isBossChatRecommendUrl,
-    });
-    const frame = await getRecommendFrame(page);
-    await ensureRecommendFrameReady(frame);
-    return frame;
+    let stage = '进入 /web/chat/recommend';
+    try {
+        await ensurePage(page, {
+            name: '推荐列表页',
+            targetUrl: BOSS_CHAT_RECOMMEND_URL,
+            matches: isBossChatRecommendUrl,
+        });
+        stage = '获取推荐 iframe';
+        const frame = await getRecommendFrame(page);
+        stage = '推荐列表就绪';
+        await ensureRecommendFrameReady(frame);
+        return frame;
+    }
+    catch (error) {
+        if (!(error instanceof TimeoutError))
+            throw error;
+        throw new Error(`recommend 初始化超时（阶段：${stage}；当前页面：${page.url()}）。${error.message}\n请先在浏览器中确认登录和验证状态，再显式执行 boss reload；主壳刷新成功后重新执行原 boss recommend 命令。`, { cause: error });
+    }
 }
 /**
  * 供 `preview` 使用：不导航；若当前主页面不在推荐页或未就绪推荐 iframe，直接抛错。
@@ -424,7 +435,7 @@ export async function runRecommend(jobKeyword) {
     }
     catch (e) {
         const message = e instanceof Error ? e.message : String(e);
-        throw new Error(`读取推荐列表失败：${message}`);
+        throw new Error(`读取推荐列表失败：${message}`, { cause: e });
     }
 }
 //# sourceMappingURL=recommend.js.map

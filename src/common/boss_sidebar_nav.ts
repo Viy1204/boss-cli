@@ -64,7 +64,7 @@ export async function clickBossSidebarMenuToPath(
   const pathReached = buildPathReachedPredicate(targetPath);
 
   try {
-    await page.waitForFunction(pathReached, { timeout: SIDEBAR_CLICK_NAV_WAIT_MS });
+    await page.waitForFunction(pathReached, { timeout: SIDEBAR_CLICK_NAV_WAIT_MS, polling: 100 });
     return;
   } catch {
     // 合成点击未导航（Boss v10718+），回退到直接 goto 目标 URL。
@@ -72,5 +72,5 @@ export async function clickBossSidebarMenuToPath(
 
   const targetUrl = new URL(targetPath, page.url()).toString();
   await page.goto(targetUrl, { waitUntil: 'load', timeout: 60_000 });
-  await page.waitForFunction(pathReached, { timeout: SIDEBAR_NAV_WAIT_MS });
+  await page.waitForFunction(pathReached, { timeout: SIDEBAR_NAV_WAIT_MS, polling: 100 });
 }

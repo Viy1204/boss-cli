@@ -52,17 +52,17 @@
 - 页面 URL、命令功能和当前位置要求记录在 `docs/boss-url-map.md`。
 - 修改导航、命令入口、当前位置校验或 help 文案前，先查阅并同步更新该文档。
 
-## 浏览器默认无头（重要）
+## 浏览器默认有头（重要）
 
-浏览器**默认以无头方式启动**，看不见窗口。有头窗口一启动就抢键盘焦点，会打断用户正在做的事，所以默认隐藏。
+浏览器**默认以有头方式启动**，窗口可见。`resolveHeadlessFromEnv()` 未收到有效覆盖时返回 `false`，与现有测试一致。需要隐藏窗口时须显式开启无头。
 
 开关优先级（`resolveHeadlessFromEnv()`，`src/browser/cdp_browser.ts`）：
 
 1. `BOSS_BROWSER_HEADLESS` —— 本 CLI 专属，显式覆盖，认 `true/1/yes/y` 与 `false/0/no/n`
-2. `RECRUIT_BROWSER_HIDDEN` —— 招聘工具链共读的单一来源（boss-cli / liepin-cli / DSH 面板都认），设 `false` 退回有头
-3. 都没设 → **无头**
+2. `RECRUIT_BROWSER_HIDDEN` —— 招聘工具链共读的单一来源（boss-cli / liepin-cli / DSH 面板都认），设 `true` 开启无头，设 `false` 保持有头
+3. 都没设 → **有头**
 
-**要让浏览器可见时**（用户说"我看不到浏览器"、"让我看看它在干什么"、需要人工介入页面）：
+**显式让浏览器可见**（需要从无头切回有头时）：
 
 ```bash
 RECRUIT_BROWSER_HIDDEN=false boss <cmd>    # 或 BOSS_BROWSER_HEADLESS=false

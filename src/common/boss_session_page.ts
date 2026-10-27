@@ -57,6 +57,7 @@ type MenuListSnapshot = {
 type BossSessionPageOptions = {
   ensureChatShell?: boolean;
   ensureMenuList?: boolean;
+  retryOnContextDestroyed?: boolean;
 };
 
 function normalizeMenuText(raw: string | null | undefined): string {
@@ -99,7 +100,7 @@ export class BossPageRiskError extends Error {
  * 熔断后立刻停下：继续自动操作既拿不到正确页面，也会让风控进一步升级。
  * 错误信息直接给出人工处置动作。
  */
-function assertNoPageRisk(page: Page): void {
+export function assertNoPageRisk(page: Page): void {
   const risk = getBossPageRiskState(page);
   if (!risk) return;
   throw new BossPageRiskError(
@@ -115,16 +116,16 @@ async function ensureBossChatShellUrlBeforeMenuList(page: Page): Promise<void> {
   await page.goto(BOSS_CHAT_INDEX_URL, { waitUntil: 'load', timeout: 60_000 });
 }
 
-async function ensureMenuListMountedAfterLoad(page: Page): Promise<void> {
+export async function ensureMenuListMountedAfterLoad(page: Page): Promise<void> {
   await page.waitForFunction(
     `(() => document.readyState === "complete" || document.readyState === "interactive")()`,
-    { timeout: 12_000 },
+    { timeout: 12_000, polling: 100 },
   );
 
   try {
     await page.waitForFunction(
       `(() => !!document.querySelector(".menu-list"))()`,
-      { timeout: MENU_LIST_MOUNT_TIMEOUT_MS },
+      { timeout: MENU_LIST_MOUNT_TIMEOUT_MS, polling: 100 },
     );
   } catch (e) {
     const err = e instanceof Error ? e : new Error(String(e));
@@ -169,7 +170,7 @@ export async function withBossSessionPage<T>(
     );
   };
 
-    const maxAttempts = 2;
+    const maxAttempts = options.retryOnContextDestroyed === false ? 1 : 2;
     let lastErr: unknown;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
     let page: Page | null = null;
