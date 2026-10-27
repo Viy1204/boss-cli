@@ -1,361 +1,369 @@
-# boss-cli — Boss直聘自动化 CLI | 批量发消息 · 自动打招呼 · AI Agent 招聘工具
+# boss-cli · BOSS 直聘命令行工具
 
-[![npm version](https://img.shields.io/npm/v/@joohw/boss-cli)](https://www.npmjs.com/package/@joohw/boss-cli)
-[![npm downloads](https://img.shields.io/npm/dm/@joohw/boss-cli)](https://www.npmjs.com/package/@joohw/boss-cli)
-[![license](https://img.shields.io/github/license/joohw/boss-cli)](./LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/joohw/boss-cli)](https://github.com/joohw/boss-cli)
+[![npm version](https://img.shields.io/npm/v/@viyzhu/boss-cli-fork)](https://www.npmjs.com/package/@viyzhu/boss-cli-fork)
+[![license](https://img.shields.io/github/license/Viy1204/boss-cli)](./LICENSE)
 
-官网主页：[boss-cli.com](https://boss-cli.com)
+这里是 [Viy1204/boss-cli](https://github.com/Viy1204/boss-cli)，基于 [joohw/boss-cli](https://github.com/joohw/boss-cli) 维护的 fork。npm 包名是 **`@viyzhu/boss-cli-fork`**，安装后的命令仍是 `boss`。
 
-**boss-cli**（`@joohw/boss-cli`）是开源的 **Boss直聘自动化命令行工具**。基于 Puppeteer / CDP 协议驱动本机 Chrome，无需 Selenium，把 Boss直聘 B 端的核心 HR 操作搬进终端：**候选人列表**、**批量发消息**、**自动打招呼**、**在线简历预览**、**深度搜索**、**职位管理**。
+boss-cli 通过 Puppeteer 和 CDP 驱动本机浏览器，操作 BOSS 直聘招聘端。你可以读取聊天列表、候选人摘要、推荐和搜索结果，按需保存在线简历截图，也可以向已确认的候选人发送消息或打招呼。它输出纯文本，不内置对话式 Agent，也不提供 JSON 输出参数。
 
-适合 HR 日常提效，也适合 Claude / GPT / Gemini 等 **AI Agent** 通过子进程调用，搭建全自动化招聘流水线。
+本 fork 维护搜索条件与结果校验、搜索池候选人定位、浏览器跨命令复用、验证页循环中止和简历截图等行为。当前源码版本为 0.8.5，使用变化见 [CHANGELOG.md](./CHANGELOG.md)。平台页面、账号权限和额度仍决定命令能否执行。
 
-```bash
-npm install -g @joohw/boss-cli@latest
-boss login
-boss help
-```
+## 和招聘工具链的关系
 
-> 纯 CLI，不内置对话式 Agent。每条命令输出结构化纯文本，Agent 可直接解析并编排多步流程。
-
----
-
-## 为什么选择 boss-cli？
-
-| 场景 | 命令 |
+| 项目 | 用途 |
 | --- | --- |
-| Boss直聘批量发消息 | `boss send --text "..."` 配合脚本循环 |
-| Boss直聘自动打招呼 | `boss greet <姓名> [--job <岗位>]` |
-| Boss直聘候选人筛选 | `boss list` / `boss list --unread` |
-| Boss直聘脚本自动化 | 本机 Chrome + CDP，Cookie 本地存储 |
-| AI 招聘 Agent | 子进程调用，输出 Agent 友好 |
-| 数据隐私 | 不经过第三方服务器，数据在 `~/.boss-cli/` |
+| 本仓库 `boss-cli` | BOSS 直聘的命令行操作，可单独使用，也可供 Agent 调用 |
+| [recruiting-copilot](https://github.com/Viy1204/recruiting-copilot) | 招聘工作流与进展看板，编排岗位梳理、寻源、初筛和面试协作 |
+| [liepin-cli](https://github.com/Viy1204/liepin-cli) | 猎聘的命令行工具，使用独立命令和登录态 |
 
----
+需要整套招聘流程时，从 recruiting-copilot 开始。只处理 BOSS 直聘时，可以直接安装本 CLI。
 
-## 安装
+## 安装本 fork
 
-**要求**：Node.js ≥ 20，本机已安装 Chrome / Chromium。
+准备以下环境：
 
-```bash
-npm install -g @joohw/boss-cli@latest
-boss help
-```
-
-### 安装本 fork（含尚未进入上游的修复）
-
-本仓库是 [`joohw/boss-cli`](https://github.com/joohw/boss-cli) 的 fork，包含风控页反弹熔断等
-上游尚未发布的修复，以 `@viyzhu/boss-cli-fork` 单独发布：
+- Node.js。建议使用仍受支持的 22 或更高版本，仓库发布流程使用 22。`package.json` 未声明 `engines`，锁定依赖的 Node.js 下限为 18；这不等于本项目验证了所有 18 及以上版本。
+- 本机 Chrome、Edge 或 Chromium。CLI 使用 `puppeteer-core`，安装时不附带浏览器。
+- 可登录 BOSS 直聘招聘端的账号，并具备所用功能的权限和额度。
 
 ```bash
 npm install -g @viyzhu/boss-cli-fork@latest
+```
+
+安装后核对包名和版本。
+
+```bash
 boss version
 ```
 
-两个包提供同名的 `boss` 命令，**不要同时装**；换装前先 `npm uninstall -g @joohw/boss-cli`。
-也可以直接装仓库 tarball（等价于 main 最新提交）：
+再查看命令帮助。
+
+```bash
+boss help
+```
+
+`boss version` 显示安装包名和版本，并查询 npm 更新。应看到 `@viyzhu/boss-cli-fork`。`boss update` 根据当前安装包的包名更新，fork 会更新到 `@viyzhu/boss-cli-fork@latest`。
+
+如果已安装上游包，先卸载上游再安装 fork。两者都提供 `boss` 命令，不要同时安装。
+
+```bash
+npm uninstall -g @joohw/boss-cli
+```
+
+```bash
+npm install -g @viyzhu/boss-cli-fork@latest
+```
+
+需要安装 GitHub 上的当前源码包时，使用分支 tarball。它跟随 `main`，不固定版本。
 
 ```bash
 npm install -g https://github.com/Viy1204/boss-cli/archive/refs/heads/main.tar.gz
 ```
 
-> 别用 `npm i -g github:Viy1204/boss-cli`：npm 会把全局包链到 npm cache 里的临时 clone，
-> 缓存清理后 `boss` 直接 `Cannot find module`。
+仓库已跟踪编译后的 `dist/`。避免使用 `npm install -g github:Viy1204/boss-cli`，该安装方式曾出现命令链接依赖 npm 临时缓存、清缓存后失效的问题。
 
-如果你觉得 boss-cli 好用，欢迎给本仓库一个 Star；使用中遇到问题请提交 Issue，新功能或改进也欢迎提交 PR。
+如果未找到浏览器，将 `CHROME_PATH` 或 `PUPPETEER_EXECUTABLE_PATH` 设为浏览器可执行文件的绝对路径。macOS 和 Linux 若遇到全局安装权限问题，使用 Node 版本管理器或可写的 npm 全局目录，并将其命令目录加入 `PATH`。
 
-> **macOS / Linux 权限问题**：系统 Node 默认全局前缀在 `/usr/local`，当前账户无写权限。建议先把全局前缀挪到用户目录（一次性配置）：
->
-> ```bash
-> mkdir -p ~/.npm-global
-> npm config set prefix ~/.npm-global
-> echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.zshrc   # bash 用 ~/.bash_profile
-> source ~/.zshrc
-> ```
->
-> 使用 `fnm` / `nvm` / `volta` 的用户可跳过此步。Windows 用户无需此步。
+## 登录并读取候选人资料
 
----
-
-## 命令一览
-
-| 命令 | 说明 |
-| --- | --- |
-| `boss login` | 打开 Boss直聘登录页（扫码/验证后手动完成） |
-| `boss update` | 通过 npm 安装最新版 boss-cli |
-| `boss reload` | 显式刷新当前已登录的 Boss 主壳页并检查侧栏；作废旧搜索快照，需重新执行查询，不接受参数 |
-| `boss shutdown` | 关闭常驻浏览器，保留登录态；下条命令按现有配置重新启动 |
-| `boss list [--unread]` | 读取聊天列表；`--unread` 仅未读 |
-| `boss chat <姓名> [--strict]` | 打开指定候选人会话 |
-| `boss chat [姓名] --index <序号> [--unread] [--strict]` | 按 `boss list` 输出序号打开会话；同名候选人建议用序号 |
-| `boss send [--text <内容>]` | 向当前会话发送消息 |
-| `boss action <操作>` | 索要简历 / 不合适 / 备注 / 交换微信等 |
-| `boss recommend [岗位关键字]` | 读取推荐候选人列表 |
-| `boss search [关键词] [--job] [--city] [--degree(-range)] [--school] [--exp(-range)] [--age(-range)] [--status] [--job-hop] [--major]` | 提供关键词查询牛人，可带城市 / 学历 / 院校 / 经验 / 年龄 / 求职状态 / 跳槽频率 / 专业筛选；无关键词仅进入表单并清除旧快照，不应用岗位/筛选、不输出结果（见下方「搜索筛选条件」） |
-| `boss greet <姓名> [--job <岗位>]` | 在当前推荐/深度搜索页对候选人打招呼（不会自动跳转） |
-| `boss greet [关键词] --index <序号> [--job <岗位>] [--dry-run]` | 搜索池打招呼。先 `boss search` 建立 15 分钟页面快照；后续按平台候选人标识、原卡片对象、完整资料与顺序校验身份，失效须重新搜索。关键词与序号须一致。正式执行优先账号权益，明确不足且确认不可用才切畅聊卡。提交确认不可撤回。`--dry-run` 仅在搜索池读取弹层后取消，推荐/深搜页会拒绝。提交确认不代表已发送或实际扣费，须人工核对 |
-| `boss preview <姓名>` | 在线简历预览（每日次数有限） |
-| `boss deep-search [岗位关键字] [--core <要求>] [--bonus <加分项>] [--clear-core] [--clear-bonus] [--match]` | 深度搜索表单状态；`--core` / `--bonus` 可重复，并按传入列表同步分组；`--clear-*` 清空分组；默认不输出候选列表，`--match` 输出最新 20 条 |
-| `boss positions` | 读取职位列表 |
-| `boss jd <名称>` | 抓取职位 JD 缓存到本地 |
-
-完整用法：`boss help`；版本间的行为变更见 [CHANGELOG.md](./CHANGELOG.md)
-
----
-
-搜索快照只保存在当前浏览器搜索 iframe 中，不写候选人资料到磁盘。旧版本搜索结果没有快照，升级后须重新 `boss search`。刷新页面、重建卡片、追加或重排列表、任何已读取资料变化及超过 15 分钟都会拒绝后续操作。`preview`、`greet --dry-run` 和正式 `greet` 不重写快照。开聊模式切换引起的按钮文案变化不属于身份资料。
-
-不提供关键词的 `boss search` 只进入搜索页并清除旧快照，返回本次尚未查询的提示；即使页面已有关键词或候选列表也不复用旧结果，不应用岗位/筛选参数。只有显式提供关键词、取得匹配业务响应并通过结果校验，才输出候选结果和创建新快照。搜索 iframe URL 参数全空、卡片为零且提示「按回车键搜索」可以是合法初始表单，提供关键词后才会查询。
-
-`search` 或 `recommend` 初始化超时会标明阶段、当前页面和原始超时信息。先在浏览器中确认登录和验证状态，再显式执行 `boss reload`；它只刷新当前已登录主壳并确认侧栏就绪，不代表候选结果已恢复。刷新会使旧搜索快照失效，之后需重新执行原只读命令，例如 `boss search TypeScript` 或 `boss recommend 前端工程师`。登录页、验证页和风险熔断状态须先人工处理；命令不会自动刷新或重新执行查询。已开始打招呼或发送的操作须核对平台状态，不能据此重试。
-
-搜索初始化、切岗、清筛选和最终读取会等待请求空闲、真实 loading 消失及完整语义资料稳定，再校验当前主 URL、可见 iframe 绑定、岗位标签与选中项、关键词和指定城市。关键词搜索须取得本次 `geeks.json` 响应，精确匹配 keywords、page=1 与岗位 jobId，HTTP2xx、业务 code=0 后再核对响应和当前列表的 encryptGeekId 顺序完全一致。每次有关键词的查询先确保不限职位，提供 --job 时再选择唯一目标，因此重复相同岗位也重新建立同次选择触发的 getFilterConditions.encryptJobId 绑定；不限职位的 jobId 必须为空。窗口最小化时，主壳、侧栏导航、搜索及推荐列表和选岗的非动画状态等待使用 100ms 数值轮询，保留用户窗口状态。
-
-经历与教育读取完整日期和 tooltip 的真实 `.t-tooltip-slot` 文本，排除 tooltip 浮层重复副本；真实资料变化仍使快照失效。`positions` 只读取 `/web/frame/job_v2/list` 的当前职位卡片。页面统计有职位但没有读到卡片时会报错，不能输出成功的零职位。
-
-当前 UI 已验证卡片 Vue 组件 `$props.geek.geekCard.encryptGeekId` 与结果响应逐项对应。快照同时校验该标识、原 DOM 对象与完整资料；标识缺失会停止，同一 DOM 换人但资料相同也会失配。该标识仅用于当前平台会话，不承诺永久或跨平台稳定。搜索池 dry-run 会点击沟通入口；只在出现确认弹层时取消。入口点击后没有弹层时，CLI 会要求人工核对，不能承诺平台没有直接发送。
-
-## 快速上手
+### 1. 完成人工登录
 
 ```bash
-# 1. 登录
 boss login
-
-# 2. 查看未读候选人
-boss list --unread
-
-# 3. 打开会话并发送消息
-boss chat 张三
-boss send --text "您好，请问方便发一下简历吗？"
-
-# 同名或姓名定位失败时，按 list 序号打开；--unread 对应 list --unread 的序号
-boss chat --index 2 --unread
-boss chat 张三 --index 2 --unread --strict
-
-# 4. 先进入推荐页，再在当前页打招呼
-boss recommend 前端工程师
-boss greet 张三 --job 前端工程师
-
-# 5. 常规搜索牛人（可带筛选）
-boss search "langgraph"
-boss search "短视频" --city 深圳 --school 统招本科
-boss search "投放" --job 数字广告 --degree 本科及以上
-boss search "剪辑" --status 离职-随时到岗 --major 计算机科学与技术
-
-# 6. 深度搜索：按传入列表同步分组条件，但不消耗匹配次数
-boss deep-search --core "AI产品经理" --core "做过 RAG 或 Agent 产品落地" --bonus "有 ToB 平台经验"
-
-# 只有明确添加 --match 才会点击「立即匹配」，会消耗今日匹配次数，并只输出最新 20 条
-boss deep-search --match
 ```
 
----
+浏览器打开登录页后，在窗口中完成扫码和验证。命令会立即返回，不等待或确认登录成功。Agent 调用时，在这里交还控制权，等用户完成登录再继续。
+
+CLI 默认打开可见浏览器，并使用独立的本地浏览器数据目录。后续命令复用该浏览器和登录态。
+
+### 2. 查看聊天列表与候选人摘要
+
+```bash
+boss list
+```
+
+只看未读列表。
+
+```bash
+boss list --unread
+```
+
+输出包含候选人序号。将下面的姓名和序号替换为实际列表中的人选。
+
+按姓名精确匹配。
+
+```bash
+boss chat 张三 --strict
+```
+
+打开 `boss list --unread` 对应的第 2 人，并核对姓名。
+
+```bash
+boss chat 张三 --index 2 --unread --strict
+```
+
+序号从 1 开始，带 `--unread` 的序号只对应未读列表。
+
+`chat` 输出候选人摘要、简历附件状态，以及当前页面已加载的聊天消息。它只打开已有会话，不向对方发送消息。聊天列表会变化，操作前核对当前候选人。
+
+### 3. 按岗位查询候选人
+
+```bash
+boss positions
+```
+
+读取职位列表，确认岗位名称。岗位名称用你账号中的实际岗位替换。
+
+```bash
+boss recommend 前端工程师
+```
+
+进入推荐页，切换岗位并读取推荐列表。
+
+```bash
+boss search "TypeScript" --job 前端工程师 --city 深圳 --degree 本科及以上
+```
+
+进入常规搜索页并执行关键词查询。
+
+有关键词的 `search` 会检查并清除旧筛选，再应用本次参数；不传 `--job` 会切到“不限职位”。不提供关键词的 `boss search` 只打开搜索表单并清除旧快照，不执行查询，也不应用岗位或筛选参数。
+
+先根据列表资料筛选，再决定是否查看在线简历。搜索参数见下方参考。
+
+### 4. 按需保存在线简历截图
+
+在已经打开的候选人会话中读取在线简历：
+
+```bash
+boss action resume
+```
+
+在刚加载的推荐或常规搜索列表中预览候选人：
+
+```bash
+boss preview 张三
+```
+
+`preview` 要求当前已在推荐页或常规搜索页，且列表已加载。它不会自动切页，不支持 `--index` 或 `--job`。列表有重名或相同打码姓名时，先在网页核对目标。
+
+这两条命令默认保存 PNG 并输出路径，不要求 OCR 密钥。平台对在线简历有每日查看额度，按需使用。
+
+### 5. 结束浏览器会话
+
+```bash
+boss shutdown
+```
+
+普通命令结束只断开 CDP，浏览器仍常驻。`shutdown` 关闭浏览器并保留浏览器数据目录。登录是否仍然有效以平台为准，失效时重新运行 `boss login`。下条业务命令会重新启动浏览器。
+
+## 命令参考
+
+### 查询与资料读取
+
+| 命令 | 行为与前提 |
+| --- | --- |
+| `boss list [--unread]` | 读取全部或未读聊天列表 |
+| `boss chat <姓名> [--strict]` | 打开已有会话，默认包含匹配，`--strict` 精确匹配；输出摘要和当前已加载消息 |
+| `boss chat [姓名] --index <序号> [--unread] [--strict]` | 按聊天列表序号打开会话，提供姓名时同时校验姓名 |
+| `boss recommend [岗位关键字]` | 进入推荐页，可按岗位关键字切岗，读取推荐列表 |
+| `boss search [关键词] [筛选参数]` | 进入搜索页，显式提供关键词才查询并输出本轮结果 |
+| `boss preview <姓名>` | 在当前推荐或搜索列表预览在线简历并保存截图，消耗平台查看额度 |
+| `boss action resume` | 在当前候选人会话打开在线简历并保存截图，受平台权限与额度限制 |
+| `boss action history` | 在当前候选人会话读取“同事沟通”和“我的沟通”记录 |
+| `boss positions` | 读取职位及开放、待开放、已关闭状态 |
+| `boss jd <名称>` | 读取指定职位 JD，缓存到 `~/.boss-cli/jd/`；命中已有缓存时直接返回缓存 |
+
+### 发送消息与处理会话
+
+以下命令会直接执行平台操作。交给 Agent 或脚本调用前，先确认候选人、岗位、消息内容和允许使用的额度。CLI 不会额外等待逐项人工批准。
+
+| 命令 | 行为与前提 |
+| --- | --- |
+| `boss send --text <内容>` | 向当前已打开会话发送文本，`-t` 是 `--text` 的别名 |
+| `boss send --text <内容> --request-resume` | 发送文本后继续执行“求简历”操作 |
+| `boss action request-attachment-resume` | 点击“求简历”并确认发送平台默认话术；需双方各至少发过一条消息 |
+| `boss action agree-resume` | 同意接收候选人发送的附件简历请求，不是下载附件命令 |
+| `boss action remark --remark <备注>` | 保存当前候选人的备注 |
+| `boss action not-fit` | 将当前候选人标记为不合适 |
+| `boss action wechat` | 发起交换微信并确认 |
+| `boss greet <姓名> [--job <岗位>]` | 在当前已加载的推荐列表打招呼，不自动切页 |
+| `boss greet [关键词] --index <序号> [--job <岗位>] [--dry-run]` | 在搜索池定位并操作人选，受下方快照与确认规则约束 |
+
+`action resume` 是读取在线简历，索要附件简历用 `action request-attachment-resume`。`send` 一次发送给当前会话，`greet` 一次操作一个人选。CLI 没有批量发送命令。
+
+### 搜索池打招呼的边界
+
+先运行带关键词的 `boss search`，核对输出，再对本轮目标执行 `greet --index`。该序号属于搜索列表，与 `chat --index` 的聊天列表序号不同。
+
+- 搜索快照只存在当前浏览器搜索页中，最多有效 15 分钟，不单独把候选人资料写入磁盘。
+- 快照绑定平台候选人标识、原卡片对象、完整资料和列表顺序。刷新、换序、追加卡片、资料变化、DOM 重建或过期后会停止，须重新搜索。该标识不承诺跨平台或永久稳定。
+- 关键词和 `--index` 同时提供时，必须指向同一张卡片。
+- 正式执行优先使用账号权益。仅在弹层明确显示权益不足且确认不可用时，才切换并验证畅聊卡模式。切换开聊模式会影响后续平台操作。
+- `--dry-run` 仅支持搜索池，会点击沟通入口，读取确认弹层后取消，不点最终确认，也不修改持久开聊模式。推荐页不支持此参数。入口点击后若没有弹层，须人工核对平台状态，不能保证没有直接发送。
+- 提交确认不可撤回。命令退出成功或弹层关闭，只能说明已提交确认，不证明已发送或实际扣费。核对平台会话和额度后再登记结果，结果不明时不要自动补发。
+
+### 会话与版本管理
+
+| 命令 | 行为 |
+| --- | --- |
+| `boss login` | 打开可见登录页，交给人工登录和验证 |
+| `boss reload` | 刷新当前已登录主壳页并检查侧栏，作废旧搜索快照；不接受参数，不自动重做查询或发送 |
+| `boss shutdown` | 关闭常驻浏览器，保留浏览器数据目录；登录是否有效以平台为准 |
+| `boss version` | 显示包名与版本，并查询 npm 更新 |
+| `boss update` | 通过 npm 全局更新当前安装包 |
+| `boss help` 或 `boss --help` | 显示完整命令与参数 |
+
+直接运行不带参数的 `boss` 不进入交互模式。交互模式仅供源码开发时的 `npm run dev` 使用。
 
 ## 搜索筛选条件
 
-`boss search` 可以把平台自带的筛选条件一起设好再搜，省掉「搜出一大堆再人工剔」。
+这些参数仅在 `boss search` 显式提供关键词时生效。提供关键词的查询会清除旧的学历、院校、经验、年龄和其他筛选，再应用本次参数。城市独立处理。
 
-**提供关键词时先检查并清除旧筛选**，再按本次参数重设；没有残留时不重复点击清空。也就是说：这一轮生效的条件
-只有你这条命令里写的，上一条命令设过的不会粘下来。
+| 参数 | 取值与规则 |
+| --- | --- |
+| `--job <岗位关键字>` | 匹配唯一岗位并切换；不传则切“不限职位” |
+| `--city <城市>` | 城市联想项必须完全匹配，如 `深圳`。不传时读 `BOSS_SEARCH_CITY`，仍为空则不操作城市控件，并非强制不限城市 |
+| `--degree <学历>` | 不限、本科及以上、硕士及以上、博士 |
+| `--degree-range <下限-上限>` | 如 `大专-本科`。两端取值为初中及以下、中专/中技、高中、大专、本科、硕士、博士。与 `--degree` 互斥 |
+| `--school <院校要求>` | 统招本科、双一流院校、211院校、985院校、留学生、QS 100、QS 500、只看第一学历。可多选 |
+| `--exp <经验>` | 在校/应届、25年毕业、26年毕业、26年后毕业、1-3年、3-5年、5-10年。单选 |
+| `--exp-range <下限-上限>` | 如 `3-8`。两端接受 `应届`、1 至 10 的整数、`10+`。与 `--exp` 互斥 |
+| `--age <年龄>` | 20-25、25-30、30-35、35-40、40-50、50以上。单选 |
+| `--age-range <下限-上限>` | 如 `23-27`。两端接受 16 至 46 的整数、`46+`。与 `--age` 互斥 |
+| `--status <求职状态>` | 离职-随时到岗、在职-暂不考虑、在职-考虑机会、在职-月内到岗。可多选 |
+| `--job-hop <跳槽频率>` | 5年少于3份、时间≥1年。单选，`≥` 可写成 `>=` |
+| `--major <专业>` | 专业名必须完全匹配，如 `计算机科学与技术`。可多选，最多 10 个 |
 
-| 参数 | 说明 |
-|---|---|
-| `--job <岗位关键字>` | 岗位下拉里模糊匹配并切换。**不传则切「不限职位」** |
-| `--city <城市>` | 如 `--city 深圳`。不传则读 `BOSS_SEARCH_CITY`，仍为空就不碰城市控件 |
-| `--degree <学历>` | 不限 / 本科及以上 / 硕士及以上 / 博士 |
-| `--school <院校要求>` | 统招本科 / 双一流院校 / 211院校 / 985院校 / 留学生 / QS 100 / QS 500 / 只看第一学历。多选用逗号分隔，中英文逗号都认 |
-| `--degree-range <下限-上限>` | 自定义学历区间（拖滑块），如 `大专-本科`。两端取值：初中及以下 / 中专/中技 / 高中 / 大专 / 本科 / 硕士 / 博士。与 `--degree` 互斥 |
-| `--exp <经验要求>` | 在校/应届 / 25年毕业 / 26年毕业 / 26年后毕业 / 1-3年 / 3-5年 / 5-10年。单选 |
-| `--exp-range <下限-上限>` | 自定义经验区间（拖页面上那个滑块），如 `3-8`。两端收 `应届`、1-10 的整数年、`10+`。与 `--exp` 互斥 |
-| `--age <年龄要求>` | 20-25 / 25-30 / 30-35 / 35-40 / 40-50 / 50以上。单选 |
-| `--age-range <下限-上限>` | 自定义年龄区间，如 `23-27`。两端收 16-46 的整数、`46+`。与 `--age` 互斥 |
-| `--status <求职状态>` | 离职-随时到岗 / 在职-暂不考虑 / 在职-考虑机会 / 在职-月内到岗。可多选 |
-| `--job-hop <跳槽频率>` | 5年少于3份 / 时间≥1年。单选；`≥` 可以写成 `>=` |
-| `--major <专业>` | 只认完全匹配的专业名（如「计算机科学与技术」）。可多选，最多 10 个 |
+多选值用半角或全角逗号分隔，含空格的参数值用引号包裹。
 
 ```bash
-export BOSS_SEARCH_CITY=深圳          # 每次都从深圳搜，不用每条命令都带 --city
-boss search "短视频" --school 统招本科,985院校
-boss search "剪辑" --status 离职-随时到岗 --major 计算机科学与技术
+boss search "短视频" --city 深圳 --school "统招本科,985院校"
+```
+
+```bash
+boss search "剪辑" --status "离职-随时到岗,在职-考虑机会" --major 计算机科学与技术
+```
+
+```bash
 boss search "剪辑" --degree-range 大专-本科 --exp-range 3-8 --age-range 24-32
 ```
 
-生效的条件会回显在结果标题里，便于确认这一轮到底按什么口径搜的：
+城市不属于“清空筛选”的范围，可能沿用页面已有值，换岗时也可能被平台清除。需要固定城市时，每次显式传 `--city`，或配置 `BOSS_SEARCH_CITY`。结果标题读取页面实际条件，检查标题后再使用结果。
 
-```
-常规搜索结果（关键词：剪辑；当前岗位：不限职位；城市：深圳；院校：统招本科；在职-考虑机会/离职-随时到岗；专业：软件工程/计算机科学与技术）
-共 15 人
-```
+CLI 会核对本次关键词、岗位响应和当前卡片的候选人标识顺序，通过后才输出结果并创建快照。性别、薪资区间、牛人活跃度、牛人职位要求和资格证书没有对应的 CLI 筛选参数。
 
-几个要注意的点：
+## 配置与本地数据
 
-- **有关键词的查询不传 `--job` 会切「不限职位」**，而不是沿用上次的岗位。以前跨命令沿用平台上的残留状态，
-  同一条命令跑两次可能搜的是两个池子。**这是相对 0.7.x 的行为变更。**
-- **城市只认完全匹配**。`--city 深圳市` 匹配不到就直接报错并列出候选，不会替你猜——
-  猜错的代价是整轮搜索白跑且你不知道。`--major` 同理。
-- **城市不在「清空筛选」的范围内**，它会跨命令留着（换 `--job` 时平台会自己把它清掉）。
-  但城市一直在标题里实时回显，所以不会出现「悄悄挂着」的情况。
-- **`只看第一学历`** 这一项页面提示写的是「第一学历为全日制本科」，卡非全日制学历时用它，
-  比事后按「年龄减年限」推算可靠。
-- 标题里的每一项都是**从页面实时读出来的**，不是把你传的参数原样打印——所以标题里没写的条件
-  就是真没生效，写了的就是真生效了。
-- `--major` 传多个时会**一个一个开弹层选**（平台的搜索框选中一项后就不再出联想，只能关掉重开），
-  所以专业越多，这条命令越慢。
-- 学历 / 经验 / 年龄的**自定义区间**用 `--degree-range` / `--exp-range` / `--age-range`，和对应的预设参数互斥
-  （页面上本来就是二选一，选了自定义，预设那排的「不限」会自动取消）。
-  `--degree-range` / `--exp-range` 是真的去拖那个滑块，比点选项慢几秒，而且拖完会按滑块的真实档位校验、
-  不对就重拖——**拖偏一格就是搜错人群，且标题上看不出来**，所以宁可慢也不赌。
-- 平台自带的「性别」「薪资区间」「牛人活跃度」「牛人职位要求」「资格证书」也没做
-  （资格证书那一项平台本身就是隐藏的）。
+可将配置放在 `~/.boss-cli/.env`，每行写一个 `KEY=VALUE`。程序也读取当前工作目录的 `.env`。不要把含密钥或候选人数据的文件提交到仓库。
 
----
+| 配置 | 用途 |
+| --- | --- |
+| `CHROME_PATH` 或 `PUPPETEER_EXECUTABLE_PATH` | 浏览器可执行文件的绝对路径 |
+| `BOSS_SEARCH_CITY` | `search` 未传 `--city` 时使用的城市 |
+| `BOSS_BROWSER_NO_FOREGROUND=true` | 普通命令不主动把浏览器切到前台；`login` 仍会显示窗口，简历截图可能临时调整窗口 |
+| `BOSS_BROWSER_HEADLESS` | 本 CLI 的无头模式覆盖项，优先于 `RECRUIT_BROWSER_HIDDEN`；未设置时跟随共读开关，仍无有效值时默认有界面 |
+| `RECRUIT_BROWSER_HIDDEN` | 招聘工具链共用的浏览器隐藏开关；本 CLI 在未收到有效覆盖时默认有界面 |
+| `BOSS_RESUME_OCR=1` | 显式开启百度在线 OCR，默认关闭 |
+| `BOSS_CLI_AGENT_BRAND` | 自定义操作蒙层上的品牌名 |
 
-## 与 AI Agent 集成
+改变有头或无头配置后，先执行 `boss shutdown`，下条命令才按新配置启动。已有浏览器会直接复用，不会即时切换。`boss login` 始终使用可见窗口。
 
-boss-cli 每条命令输出纯文本，适合 LLM 通过子进程编排：
-
-```
-1. boss list --unread     → 获取未读候选人
-2. boss chat <姓名>       → 打开会话
-   同名时用 boss chat [姓名] --index <序号> [--unread]
-3. boss action resume     → 索要简历
-4. boss send -t "..."     → 发送消息
-5. boss recommend         → 读取推荐列表
-6. boss search <关键词>   → 读取常规搜索列表
-7. boss greet <姓名>      → 批量打招呼
-```
-
-详见 [AGENTS.md](./AGENTS.md)。
-
----
-
-## 常见问题
-
-**boss-cli 是什么？**
-开源 Boss直聘自动化 CLI，用终端命令代替手动操作 Boss直聘网页，支持 AI Agent 编排。
-
-**和 Selenium / Playwright 有什么区别？**
-boss-cli 基于 CDP 连接本机 Chrome，复用已有登录态，针对 Boss直聘 B 端页面做了专用封装，开箱即用。
-
-**需要额外下载浏览器吗？**
-不需要。使用本机已安装的 Chrome / Chromium，通过 CDP 协议连接。
-
-**数据会上传到服务器吗？**
-不会。Cookie 和缓存仅存储在本地 `~/.boss-cli/`，CLI 不经过任何第三方服务器。
-
-**浏览器是有头还是无头？能不能藏起来？**
-
-**默认有头**（真窗口，和上游一致）。代价是窗口启动时会抢一次键盘焦点。
-
-**不建议改成无头。** 本 fork 2026-08-19 之前默认无头，理由是不抢焦点；后来观测到两个独立的账号事故都指向无头，于是翻回有头：
-
-- 一个账号被 BOSS 限制 **web 端登录**，页面文案明确写「检测到您的账号存在使用第三方招聘管理系统、插件、外挂、软件等辅助工具」——判定的是**工具指纹**，不是打招呼频率。
-- 另一个团队用上游版（默认有头）长期没事，他们的 AI 擅自改走无头之后当天封号。
-
-无头 Chrome 的 `User-Agent` 会自报 `HeadlessChrome/<ver>`，而 Client Hints 仍说 `Google Chrome`——这个自相矛盾本身就是强信号。
-
-**注意 liepin-cli 那边默认仍是无头**：猎聘的风控形态一次都没观测过，没有证据支持翻它的默认。所以 `RECRUIT_BROWSER_HIDDEN` 的语义是**统一覆盖开关**而非「提供默认值」——不设时两个 CLI 各用自己的默认（boss 有头、liepin 无头），显式设了才把两家拉平。
-
-真要无头（清楚这是在拿账号冒险）：
-
-```bash
-RECRUIT_BROWSER_HIDDEN=true boss list      # 招聘工具链共读的开关（boss / liepin / DSH 面板都认）
-BOSS_BROWSER_HEADLESS=true boss list       # 只影响 boss-cli，优先级更高
-```
-
-**换了变量不会让已经在跑的那只切换模式** —— 先 `boss shutdown` 关掉它，下条命令才会按新模式重启。
-
-**窗口会不会弹到前台？** 每条命令开头会把 Boss 标签页激活（`bringToFront`），Windows 上这会把**最小化**的窗口还原并抢焦点。现在的规则：窗口已被你最小化就不动它；想彻底禁止抢前台（比如把 CLI 接进后台系统定时跑），设：
-
-```bash
-BOSS_BROWSER_NO_FOREGROUND=true boss list
-```
-
-`boss login` 不受此开关影响，扫码必须看得见。
-
-浏览器跨命令常驻（命令结束只断 CDP、不关窗口），跑完想释放内存就 `boss shutdown`（登录态保留）。
-
-`boss login` **一直是有头的** —— 扫码必须看得见。真开了无头，它也会自己把无头实例关掉、以有头重启（登录态在 `~/.boss-cli/.cache/` 里，不会丢）。
-
-想在不切窗口的前提下看浏览器在做什么，用 recruiting-copilot 的 DSH「招聘浏览器」面板：把画面推到 Web UI 里。**面板默认折叠、默认只读**——在面板里手动操作不受本 CLI 那套页面守卫的保护（守卫挂在 CLI 进程的 CDP session 上，进程一退出就全失效），所以招聘动作请走命令。
-
-**如何自定义操作蒙层品牌？**
-设置环境变量 `BOSS_CLI_AGENT_BRAND=你的品牌名`。
-
-**`boss preview` 报「截图疑似空壳」是什么意思？**
-
-截出来的 PNG 只有水印、没有简历正文。连续 preview 很多人时会出现（[recruiting-copilot#37](https://github.com/Viy1204/recruiting-copilot/issues/37)：约第 9 人起稳定复现，但**人眼看浏览器里正文是在的**，所以是截图路径的问题，不是平台不让看）。
-
-0.7.2 起遇到这种情况会**直接报错**，不再假报成功；PNG 仍然落盘，方便你自己看。判据是 PNG 字节数 / 截图像素数，两个可调项：
-
-```bash
-BOSS_RESUME_BLANK_BYTES_PER_PIXEL=0.015   # 空壳阈值，设 0 关掉这个检查
-BOSS_RESUME_SCREENSHOT_VIEWPORT_HEIGHT=1600   # 截图时临时拉高的视口高度（默认 5000）
-```
-
-如果报错里还提到「有 N 个可见在线简历面板」，说明上一次弹层没关净、截到了残留的旧面板 —— `boss shutdown` 重启浏览器可恢复。
-
-**别把 preview 当批量工具**：它吃平台的每日查看额度，也是最容易踩上面这些坑的路径。先用列表卡片做硬否决，只对强候选 preview，其余走「打招呼 → 要简历附件」。
-
----
-
-## 数据目录
+需要 OCR 时，设置 `BOSS_RESUME_OCR=1`，并配置 `BOSS_BAIDU_API_KEY` 和 `BOSS_BAIDU_SECRET_KEY`。代码也接受 `API_KEY` 和 `SECRET_KEY`。OCR 会将在线简历截图发送给百度服务，使用前确认数据授权与该服务的额度。已有密钥也不会自动开启 OCR；开启后缺少密钥或识别失败会报错。
 
 | 路径 | 内容 |
 | --- | --- |
-| `~/.boss-cli/.cache/` | Cookie、浏览器用户数据 |
-| `~/.boss-cli/jd/` | `boss jd` 缓存的岗位描述 |
+| `~/.boss-cli/.cache/browser-data/` | 默认浏览器用户数据和会话数据；登录是否有效以平台为准 |
+| `~/.boss-cli/.cache/resume-screenshots/` | 在线简历 PNG 截图 |
+| `~/.boss-cli/.cache/ocr/` | 开启 OCR 后生成的文本 |
+| `~/.boss-cli/jd/` | 职位 JD 缓存 |
+| `~/.boss-cli/.env` | 用户配置，可包含 OCR 密钥 |
 
----
+CLI 本身不内置模型服务。浏览器会访问 BOSS 直聘，版本检查会访问 npm，显式开启 OCR 后会访问百度。外部 Agent 如何处理命令输出和截图，由调用方的配置决定。
 
-## 开发
+## 已知限制与故障处理
+
+### 深度搜索暂不可用
+
+`boss deep-search` 仍保留命令入口，但实现依赖已下线的 `/web/chat/aiform`。新版深度搜索在 `/web/chat/search/ai`，本 CLI 尚未迁移。需要该功能时，先在网页端人工使用。
+
+`boss help` 仍列出 `--core`、`--bonus`、`--clear-core`、`--clear-bonus` 和 `--match`，这些是旧页面参数，不表示新版已适配。旧实现中只有 `--match` 才点击“立即匹配”并消耗次数。
+
+### 登录、验证或初始化超时
+
+遇到验证页、反复跳转或账号限制时，停止自动操作，在可见浏览器中检查平台提示并人工处理。工具不能替代平台授权，也不保证账号不会受限。
+
+`search` 或 `recommend` 初始化超时会带阶段和当前页面信息。确认登录、验证均完成且能正常进入主界面后，可以显式执行：
 
 ```bash
-npm run build   # 编译到 dist/
-npm run dev     # build + 交互模式
+boss reload
 ```
 
----
-
-## 发布
-
-仓库通过 GitHub Actions 自动发布，工作流文件是 `.github/workflows/tag-publish.yml`。
-
-发布新版本时，本地只需要更新 `package.json` 版本号、提交代码、创建并推送 `v*` tag：
+刷新成功后，重新执行只读查询。
 
 ```bash
-git tag -a v0.7.0 -m "v0.7.0"
-git push origin main
-git push origin v0.7.0
+boss search "TypeScript" --city 深圳
 ```
 
-tag 推送后，workflow 会自动安装依赖、构建、检查 npm 版本、发布、更新 `latest` dist-tag，并创建或更新 GitHub Release。
-本地不需要手动执行 `npm publish`。
+`reload` 成功只代表主壳与侧栏就绪。它会作废旧搜索快照，之后重新运行所需的只读查询。已经开始发送或打招呼的操作，先核对平台结果，不据此重试。
 
-**别用 `gh release create` 顺带建 tag**：那样 tag 是 Releases API 在服务端建的，
-GitHub **不会**为它发 `push` 事件，`on: push.tags` 因此不触发（v0.6.8 和 v0.7.0 就是这么漏掉的，
-最后靠手动 `workflow_dispatch` 才发出去）。workflow 现在额外挂了 `release: [published]` 兜底，
-所以先建 Release 也能发；但推荐仍是先 `git push origin vX.Y.Z`，让 Release 由 workflow 自动生成。
+### 在线简历截图疑似空壳
 
-**发的是哪个包**：workflow 用 `node -p "require('./package.json').name"` 取包名，所以本 fork 发布的是
-**`@viyzhu/boss-cli-fork`**，不是上游的 `@joohw/boss-cli`。（此处此前写着上游包名，已订正。）
+该错误表示截图检查发现疑似只有水印、缺少正文的 PNG。CLI 会报错并保留图片供检查，不应把该图片当作有效简历。
 
-npm 发布依赖仓库 Secret `NPM_TOKEN`；**没配这个 secret 时 workflow 会打印
-`NPM_TOKEN secret is missing; skipping publish.` 然后跳过发布，tag 推送本身仍然"成功"**——
-所以推完 tag 要去 Actions 里确认那一步真的跑了。同名同版本已发布过时也会跳过。
+先打开输出路径确认正文。若错误同时提示有多个可见简历面板，可以关闭残留面板，或用 `boss shutdown` 重启浏览器，再重新查询目标。按需预览，避免逐人批量消耗查看额度。
 
----
+## 源码开发与发布
 
-## 许可
+```bash
+git clone https://github.com/Viy1204/boss-cli.git
+```
 
-[GPL-3.0](./LICENSE)
+进入仓库目录。
 
----
+```bash
+cd boss-cli
+```
 
-## 相关链接
+安装依赖。
 
-- 官网：[boss-cli.com](https://boss-cli.com)
-- npm：[@joohw/boss-cli](https://www.npmjs.com/package/@joohw/boss-cli)
-- GitHub：[joohw/boss-cli](https://github.com/joohw/boss-cli)
-- 问题反馈：[Issues](https://github.com/joohw/boss-cli/issues)
+```bash
+npm ci
+```
+
+编译 TypeScript。
+
+```bash
+npm run build
+```
+
+检查本地 CLI 的帮助输出。
+
+```bash
+node dist/cli/index.js --help
+```
+
+运行测试。
+
+```bash
+npm test
+```
+
+`npm run build` 编译到 `dist/`，`npm test` 先构建再运行 `tests/*.test.mjs`。`npm run dev` 构建后进入开发交互模式，输入 `exit` 或 `quit` 退出。
+
+协作约定见 [AGENTS.md](./AGENTS.md)，页面与命令位置要求见 [docs/boss-url-map.md](./docs/boss-url-map.md)。
+
+发布工作流是 [.github/workflows/tag-publish.yml](./.github/workflows/tag-publish.yml)，支持推送 `v*` 标签、发布 GitHub Release 和手动触发。它从 `package.json` 读取包名，发布本 fork 的 npm 包；预发布版本使用 `next`，正式版本使用 `latest`。先推送标签可由工作流生成 Release。
+
+npm 发布依赖仓库 Secret `NPM_TOKEN`。缺少该 Secret 时，工作流会打印 `NPM_TOKEN secret is missing; skipping publish.` 并跳过 npm 发布；已有同版本也跳过发布。工作流成功不代表 npm 一定产生了新版本，维护者须检查发布步骤和 dist-tag。
+
+## 许可与反馈
+
+采用 [GPL-3.0](./LICENSE)。上游项目与作者信息保留在 [joohw/boss-cli](https://github.com/joohw/boss-cli)。
+
+本 fork 的版本和问题反馈使用以下入口：
+
+- [npm：@viyzhu/boss-cli-fork](https://www.npmjs.com/package/@viyzhu/boss-cli-fork)
+- [GitHub：Viy1204/boss-cli](https://github.com/Viy1204/boss-cli)
+- [问题反馈](https://github.com/Viy1204/boss-cli/issues)
+- [版本记录](https://github.com/Viy1204/boss-cli/releases)
