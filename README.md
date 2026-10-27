@@ -265,7 +265,6 @@ CLI 会核对本次关键词、岗位响应和当前卡片的候选人标识顺�
 | `BOSS_BROWSER_HEADLESS` | 本 CLI 的无头模式覆盖项，优先于 `RECRUIT_BROWSER_HIDDEN`；未设置时跟随共读开关，仍无有效值时默认有界面 |
 | `RECRUIT_BROWSER_HIDDEN` | 招聘工具链共用的浏览器隐藏开关；本 CLI 在未收到有效覆盖时默认有界面 |
 | `BOSS_RESUME_OCR=1` | 显式开启百度在线 OCR，默认关闭 |
-| `BOSS_CLI_AGENT_BRAND` | 自定义操作蒙层上的品牌名 |
 
 改变有头或无头配置后，先执行 `boss shutdown`，下条命令才按新配置启动。已有浏览器会直接复用，不会即时切换。`boss login` 始终使用可见窗口。
 
