@@ -125,6 +125,7 @@ export async function implRecommend(jobKeyword?: string): Promise<string> {
 
 export async function implPreview(opts: {
   candidateTarget: string;
+  candidateIndex?: number;
 }): Promise<string> {
   return runPreview(opts);
 }

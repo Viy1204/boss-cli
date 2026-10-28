@@ -43,6 +43,7 @@ export declare function implBossSearchSet(opts: {
 export declare function implRecommend(jobKeyword?: string): Promise<string>;
 export declare function implPreview(opts: {
     candidateTarget: string;
+    candidateIndex?: number;
 }): Promise<string>;
 export declare function implRecommendGreet(opts: {
     candidateTarget: string;

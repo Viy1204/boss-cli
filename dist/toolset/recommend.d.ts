@@ -1,5 +1,6 @@
 import type { Frame, Page } from 'puppeteer-core';
 export type RecommendCandidate = {
+    index: number;
     geekId: string;
     name: string;
     salary: string;
@@ -10,7 +11,6 @@ export type RecommendCandidate = {
     highlights: string[];
     canGreet: boolean;
     hasHistoryChat: boolean;
-    /** 卡片为灰色「已看过」样式（如 `.candidate-card-wrap.has-viewed` / `.card-inner.has-viewed`） */
     hasViewed: boolean;
 };
 export declare function isBossChatRecommendUrl(url: string): boolean;
@@ -27,10 +27,9 @@ export declare function clickGreet(frame: Frame, target: string): Promise<{
     message: string;
 }>;
 export declare function markGreetProduced(before: RecommendCandidate[], after: RecommendCandidate[]): void;
-/**
- * 在推荐 iframe 内根据姓名打开在线简历预览：点击候选人卡片主体 `.card-inner`（与侧栏「打招呼」分离）。
- * 父页随后出现 `c-resume` iframe（如 `source=recommend`）。旧版仅有「在线简历」链接时仍尝试点击链接。
- */
-export declare function openRecommendResumePreview(frame: Frame, target: string): Promise<boolean>;
+export declare function openRecommendResumePreview(frame: Frame, target: string, index?: number): Promise<{
+    name: string;
+    index: number;
+}>;
 export declare function runRecommend(jobKeyword?: string): Promise<string>;
 //# sourceMappingURL=recommend.d.ts.map

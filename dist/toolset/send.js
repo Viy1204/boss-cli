@@ -33,13 +33,20 @@ export async function runSendChatMessage(options) {
             await typeTextWithRandomKeyDelay(page, messageText, SEND_TYPING_GAP_MS.min, SEND_TYPING_GAP_MS.max, signal);
             await sleepRandom(120, 420, signal);
             await page.keyboard.press('Enter');
-            await sleepRandom(SEND_AFTER_ENTER_MS.min, SEND_AFTER_ENTER_MS.max, signal);
-            if (!requestResume) {
-                return `已发送消息：${messageText}`;
+            const submitted = `文本已提交发送（未确认送达，请核对聊天记录）：${messageText}`;
+            try {
+                await sleepRandom(SEND_AFTER_ENTER_MS.min, SEND_AFTER_ENTER_MS.max, signal);
+                if (!requestResume) {
+                    return submitted;
+                }
+                await sleepRandom(1200, 2800, signal);
+                const resumeResult = await runRequestAttachmentResume(page);
+                return `${submitted}\n${resumeResult}`;
             }
-            await sleepRandom(1200, 2800, signal);
-            const resumeResult = await runRequestAttachmentResume(page);
-            return `已发送消息：${messageText}\n${resumeResult}`;
+            catch (e) {
+                const reason = e instanceof Error ? e.message : String(e);
+                throw new Error(`${submitted}\n后续操作失败：${reason}。请先核对聊天记录，不要直接重跑 send。`, { cause: e });
+            }
         });
     }
     catch (e) {

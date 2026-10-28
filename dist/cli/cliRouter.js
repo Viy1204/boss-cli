@@ -132,12 +132,15 @@ function printHelp() {
   boss action <操作> [--remark <备注>]
       仅在当前聊天页已打开候选人详情时执行操作，并只返回 action 执行结果
       操作: resume | not-fit | remark | agree-resume | request-attachment-resume | history | wechat
-      resume：读取在线简历，默认保存 PNG 并输出路径；OCR 默认关闭，需显式设置 BOSS_RESUME_OCR=1 和百度密钥
+      resume：直接读取在线简历，无须先索要附件或等对方回复；默认保存 PNG 并输出路径
+      OCR 默认关闭，需显式设置 BOSS_RESUME_OCR=1 和百度密钥；仅识别截图，折叠内容不自动展开，不提供结构化简历 JSON
       agree-resume：同意接收附件简历请求；request-attachment-resume：工具栏「求简历」，确认后发送默认话术（需双方各至少发过一条消息）
+      附件请求与在线简历读取独立；当前不提供附件下载命令
       操作为 remark 时必须提供 --remark
   boss send --text <内容> [--request-resume]
       向当前已打开的候选人会话发送文本；-t 是 --text 的别名
       --request-resume：发送后延迟片刻自动执行「求简历」操作
+      返回仅确认已提交发送，不代表送达；后续求简历失败也可能已发出文本，请核对聊天记录后再决定是否重试
   boss positions
       读取当前职位列表（含开放/待开放/已关闭状态）；只读job_v2列表frame，统计有职位但无卡片时会报错
   boss jd <name>
@@ -175,9 +178,12 @@ function printHelp() {
       生效的筛选条件会回显在结果标题里，读的是页面实时状态而不是你传的参数
       最终验证当前可见搜索iframe及预期条件；geeks响应须匹配关键词/岗位、HTTP2xx且code0，候选人ID顺序与DOM一致后才创建快照
       隐藏/最小化时非动画DOM条件用100ms轮询；不改变用户窗口状态
-  boss preview <姓名>
-      在线简历预览：须当前已在「推荐」(/web/chat/recommend) 或「常规搜索」(/web/chat/search) 且列表已加载；不自动切换列表页
-      默认保存 PNG 并输出路径；OCR 默认关闭，不支持 --index 或 --job；旧深搜页分支暂不可用
+  boss preview <姓名> 或 boss preview [姓名] --index <序号>
+      直接预览在线简历，无须先打招呼或索要附件；须先运行 recommend 或带关键词的 search 加载当前列表
+      须当前已在「推荐」(/web/chat/recommend) 或「常规搜索」(/web/chat/search)；不自动切换列表页
+      --index 使用最近一次列表输出的 1-based 序号；同名须用序号，同时提供姓名时校验同一目标
+      列表快照有效期15分钟；缺失、刷新、换序或资料变化会拒绝，请重新运行对应列表命令
+      默认保存 PNG 并输出路径；OCR 默认关闭，不支持 --job；旧深搜页分支暂不可用
       注意：平台对在线简历每日可查看次数有限，请按需使用、谨慎查看
   boss greet <姓名> [--job <岗位关键字>]
       须当前已在「推荐」(/web/chat/recommend) 且列表已加载；不自动切换列表页；旧深搜页分支暂不可用
@@ -564,15 +570,20 @@ export async function executeCommand(argv) {
         if (flags.size > 0) {
             die('❌ preview 不支持该 flag');
         }
-        const unsupportedOpts = Object.keys(opts);
+        const unsupportedOpts = Object.keys(opts).filter((key) => key !== 'index');
         if (unsupportedOpts.length > 0) {
             die(`❌ preview 不支持: --${unsupportedOpts[0]}`);
         }
         const candidateTarget = rest.join(' ').trim();
-        if (!candidateTarget) {
-            die('❌ 用法: preview <姓名>');
+        const indexRaw = opts.index;
+        const candidateIndex = indexRaw === undefined ? undefined : Number(indexRaw);
+        if (candidateIndex !== undefined && (!Number.isSafeInteger(candidateIndex) || candidateIndex < 1)) {
+            die(`❌ preview --index 必须是从 1 开始的整数，当前值: ${indexRaw}`);
         }
-        return implPreview({ candidateTarget });
+        if (!candidateTarget && candidateIndex === undefined) {
+            die('❌ 用法: preview <姓名> 或 preview [姓名] --index <序号>');
+        }
+        return implPreview({ candidateTarget, candidateIndex });
     }
     if (cmd === 'recommend') {
         const { rest, opts, flags } = parseOpts(tail);

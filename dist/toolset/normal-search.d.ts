@@ -181,7 +181,10 @@ export declare function selectNormalSearchJobHop(frame: Frame, label: string): P
  * 且已选的专业还在。所以多个专业只能一个一个来，这是平台行为不是效率取舍。
  */
 export declare function selectNormalSearchMajors(frame: Frame, labels: string[]): Promise<string[]>;
-export declare function openNormalSearchResumePreview(frame: Frame, target: string): Promise<boolean>;
+export declare function openNormalSearchResumePreview(frame: Frame, target: string, index?: number): Promise<{
+    name: string;
+    index: number;
+}>;
 /**
  * 搜索池卡片上「开聊」按钮的文案白名单（前缀匹配）。
  *

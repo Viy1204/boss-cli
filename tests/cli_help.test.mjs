@@ -67,6 +67,12 @@ test('help、--help 和 -h 离线输出一致，并说明当前能力与限制',
   assert.match(help.stderr, /旧实现.*--match.*消耗/);
   assert.doesNotMatch(help.stderr, /推荐.*「深度搜索」.*且列表已加载/);
   assert.match(help.stderr, /默认保存 PNG 并输出路径/);
+  assert.match(help.stderr, /preview \[姓名\] --index <序号>/);
+  assert.match(help.stderr, /同名须用序号/);
+  assert.doesNotMatch(help.stderr, /不支持 --index/);
+  assert.match(help.stderr, /无须先打招呼或索要附件/);
+  assert.match(help.stderr, /当前不提供附件下载命令/);
+  assert.match(help.stderr, /不代表送达/);
 });
 
 test('生产入口无参数时离线报错，不进入交互模式', t => {

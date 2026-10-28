@@ -61,7 +61,7 @@ async function waitForChatFilterTabSelected(page, label) {
       const selectedByAria = tab.getAttribute("aria-selected") === "true";
       const selectedByAncestor = !!tab.closest(".active, .selected, .current, .checked");
       return selectedByClass || selectedByAria || selectedByAncestor;
-    })()`, { timeout: 8_000 });
+    })()`, { timeout: 8_000, polling: 100 });
 }
 export async function ensureChatListReady(page, filter = 'all') {
     await ensurePage(page, {
@@ -74,7 +74,7 @@ export async function ensureChatListReady(page, filter = 'all') {
       if (!filter) return false;
       const tabs = Array.from(filter.querySelectorAll("span"));
       return tabs.length >= 2;
-    })()`, { timeout: 15_000 });
+    })()`, { timeout: 15_000, polling: 100 });
     const filterLabel = filter === 'unread' ? '未读' : '全部';
     await clickChatFilterTab(page, filterLabel);
     await sleepRandom(LIST_FILTER_GAP_MS.min, LIST_FILTER_GAP_MS.max);

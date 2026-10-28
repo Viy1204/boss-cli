@@ -41,7 +41,7 @@ export const SEARCH_CANDIDATE_READER_SCRIPT = `
     labels: unique(Array.from(card.querySelectorAll(".card-label")).map(el => el.textContent)),
     basicInfo: norm(card.querySelector(".info-labels")?.textContent),
     summary: norm(card.querySelector(".info-detail")?.textContent),
-    tags: unique(Array.from(card.querySelectorAll(".info-tags:not(.info-tags-measure) .info-tags-item")).map(el => el.textContent)),
+    tags: unique(Array.from(card.querySelectorAll(".info-tags-measure .info-tags-item")).map(el => el.textContent)),
     expectation: norm(card.querySelector(".expect-exp-box")?.textContent),
     work: Array.from(card.querySelectorAll(".work-exp-box .work-exp-item")).map(readExperience).filter(Boolean),
     education: Array.from(card.querySelectorAll(".edu-exp-box li")).map(readExperience).filter(Boolean).join("；"),

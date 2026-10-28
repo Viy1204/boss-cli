@@ -1346,40 +1346,19 @@ async function closeMajorDialog(frame, confirm) {
         await sleepRandom(FILTER_SETTLE_MS.min, FILTER_SETTLE_MS.max);
     }
 }
-export async function openNormalSearchResumePreview(frame, target) {
-    const targetLiteral = JSON.stringify(target.trim());
-    const opened = (await frame.evaluate(`(() => {
-    const raw = ${targetLiteral};
-    const bare = raw.replace(/\\*/g, "");
-    const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
-    const cards = Array.from(document.querySelectorAll(".geek-info-card"));
-    if (cards.length === 0) return false;
-    const targetCard =
-      cards.find((item) => {
-        const name = norm(item.querySelector(".name-label")?.textContent);
-        return name === raw || (!!bare && name.includes(bare));
-      }) ?? null;
-    if (!(targetCard instanceof HTMLElement)) return false;
-
-    function tryOpen(el) {
-      if (!(el instanceof HTMLElement)) return false;
-      const st = window.getComputedStyle(el);
-      if (st.pointerEvents === "none" || Number(st.opacity) < 0.3) return false;
-      el.scrollIntoView({ block: "center", inline: "nearest" });
-      el.click();
-      return true;
-    }
-
-    if (tryOpen(targetCard.querySelector(".name-label"))) return true;
-    if (tryOpen(targetCard.querySelector(".info-detail"))) return true;
-    if (tryOpen(targetCard.querySelector(".geek-info-main, .geek-card-main, .card-content"))) return true;
-    if (tryOpen(targetCard.querySelector("a"))) return true;
-    return tryOpen(targetCard);
-  })()`));
-    if (opened) {
-        await sleepRandom(RESUME_PREVIEW_OPEN_GAP_MS.min, RESUME_PREVIEW_OPEN_GAP_MS.max);
-    }
-    return opened;
+export async function openNormalSearchResumePreview(frame, target, index) {
+    const selection = await selectSearchPoolCandidate(frame, { target, index, match: 'name' });
+    await frame.evaluate(`(() => {
+    ${validatedSearchSelectionScript(selection)}
+    const nameLabel = picked.querySelector(".name-label");
+    if (!(nameLabel instanceof HTMLElement)) throw new Error("候选人简历入口 .name-label 不存在；未点击。");
+    nameLabel.scrollIntoView({ block: "center", inline: "nearest" });
+    (() => { ${validatedSearchSelectionScript(selection)} })();
+    if (picked.querySelector(".name-label") !== nameLabel) throw new Error("候选人简历入口已变化；未点击。");
+    nameLabel.click();
+  })()`);
+    await sleepRandom(RESUME_PREVIEW_OPEN_GAP_MS.min, RESUME_PREVIEW_OPEN_GAP_MS.max);
+    return { name: selection.name, index: selection.index };
 }
 /**
  * 搜索池卡片上「开聊」按钮的文案白名单（前缀匹配）。
@@ -1405,7 +1384,9 @@ async function selectSearchPoolCandidate(frame, locator) {
     const raw = ${JSON.stringify((locator.target ?? '').trim())};
     const loose = (v) => norm(v).replace(/[*＊\\s]/g, "").toLowerCase();
     const key = loose(raw);
-    const matches = card => key && (loose(readCandidate(card).name).includes(key) || loose(readCandidate(card).summary).includes(key));
+    const nameOnly = ${JSON.stringify(locator.match === 'name')};
+    const matches = card => key && (loose(readCandidate(card).name).includes(key) ||
+      (!nameOnly && loose(readCandidate(card).summary).includes(key)));
     let index = wantIndex;
     if (index !== null) {
       if (!Number.isInteger(index) || index < 1 || index > cards.length) throw new Error("搜索快照中没有此序号。");

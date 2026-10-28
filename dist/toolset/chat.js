@@ -55,7 +55,7 @@ async function waitForChatHistoryPanelReady(page, selectedTab) {
         if (norm(selected?.textContent) !== tabLabel) return false;
       }
       return !!root.querySelector(".record");
-    })()`, { timeout: 10_000 });
+    })()`, { timeout: 10_000, polling: 100 });
 }
 /**
  * 打开「沟通记录」弹窗，依次读取「同事沟通」「我的沟通」列表，关闭弹窗。
@@ -211,7 +211,7 @@ async function closeChatHistoryPopup(page) {
           const r = el.getBoundingClientRect();
           return st.display === "none" || st.visibility === "hidden" || r.width <= 0 || r.height <= 0;
         });
-      })()`, { timeout: 3_000 }).catch(() => { });
+      })()`, { timeout: 3_000, polling: 100 }).catch(() => { });
         const popupWrap = await page.$('.boss-popup__wrapper.chat-history, .boss-dialog__wrapper.chat-history');
         if (popupWrap) {
             await page.evaluate(`(() => {
@@ -229,7 +229,7 @@ async function closeChatHistoryPopup(page) {
             const r = el.getBoundingClientRect();
             return st.display === "none" || st.visibility === "hidden" || r.width <= 0 || r.height <= 0;
           });
-        })()`, { timeout: 2_500 }).catch(() => { });
+        })()`, { timeout: 2_500, polling: 100 }).catch(() => { });
         }
     }
     catch (err) {
@@ -303,7 +303,7 @@ async function waitForOpenedCandidateChat(page, expectedName) {
       const root = Array.from(document.querySelectorAll(".base-info-single-container")).find(isVisible);
       const detailName = norm(root?.querySelector(".name-box")?.textContent);
       return selectedName === name && detailName === name;
-    })()`, { timeout: 15_000 });
+    })()`, { timeout: 15_000, polling: 100 });
     await page.waitForFunction(`(() => {
       const isVisible = (el) => {
         if (!el) return false;
@@ -317,14 +317,20 @@ async function waitForOpenedCandidateChat(page, expectedName) {
       const items = list.querySelectorAll(".message-item");
       if (!items || items.length === 0) return false;
       return Array.from(items).some((item) => {
-        const txt =
-          item.querySelector(".item-friend .text span")?.textContent ??
-          item.querySelector(".item-myself .text span")?.textContent ??
-          item.querySelector(".item-system .message-card-top-title")?.textContent ??
-          "";
-        return txt.replace(/\\s+/g, " ").trim().length > 0;
+        if (item.querySelector(".item-friend .resume-icon")) return true;
+        return [
+          ".item-friend .text",
+          ".item-friend .message-card-top-title",
+          ".item-friend .message-card-buttons .card-btn",
+          ".item-myself .text span",
+          ".item-system .message-card-top-title",
+          ".item-system .text span",
+        ].some((selector) => {
+          const text = item.querySelector(selector)?.textContent ?? "";
+          return text.replace(/\\s+/g, " ").trim().length > 0;
+        });
       });
-    })()`, { timeout: 20_000 });
+    })()`, { timeout: 20_000, polling: 100 });
 }
 async function scrapeCurrentChatMessages(page) {
     return (await page.evaluate(`(() => {
@@ -389,18 +395,18 @@ async function scrapeCurrentChatMessages(page) {
   })()`));
 }
 async function renderOpenedCandidateChat(page, foundName) {
-    await waitForOpenedCandidateChat(page, foundName);
     const scraped = await scrapeCurrentChatMessages(page);
     const detailLines = scraped.messages.map((m) => {
         const tag = chatRoleTag(m.from);
         const timePart = m.time ? ` ${m.time}` : '';
         return `${tag}${timePart} ${m.text}`.trimEnd();
     });
-    const resumeStatus = scraped.hasFriendResumeAttachment ? '已获取' : '未获取';
+    const resumeStatus = scraped.hasFriendResumeAttachment ? '已收到' : '未发现';
     const summary = await fetchCandidateSummary(page, foundName, true);
     const out = [
         `成功进入候选人聊天：${foundName}`,
-        `简历获取状态: ${resumeStatus}`,
+        `附件简历消息：${resumeStatus}（仅当前已加载消息）`,
+        '在线简历可直接使用 boss action resume 读取，无须先索要。',
     ];
     const summaryLines = [];
     const summaryName = summary.name || foundName;
@@ -429,7 +435,7 @@ async function renderOpenedCandidateChat(page, foundName) {
     if (summary.remark) {
         out.push('', `备注: ${summary.remark}`);
     }
-    out.push('', '完整聊天消息：');
+    out.push('', '当前已加载聊天消息：');
     if (detailLines.length > 0) {
         out.push('', ...detailLines);
     }
@@ -445,29 +451,32 @@ export async function runOpenCandidateChatByIndex(page, params) {
     const filter = params.filter ?? 'all';
     const expectedName = params.expectedName?.trim() ?? '';
     const exact = params.exact === true;
-    await ensureChatListReady(page, filter);
+    await ensureChatListReady(page, 'all');
     if (!isBossChatIndexUrl(page.url())) {
         throw new Error('当前不在沟通列表页（/web/chat/index），无法打开候选人聊天。');
     }
-    const rowInfo = (await page.evaluate(`((rowIndex) => {
+    const rowInfo = (await page.evaluate(`(() => {
+    const rowIndex = ${JSON.stringify(params.index)};
+    const unreadOnly = ${JSON.stringify(filter === 'unread')};
     const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
-    const wraps = Array.from(document.querySelectorAll(".geek-item-wrap"));
-    const total = wraps.length;
-    const wrap = wraps[rowIndex - 1];
-    if (!wrap) return { total, name: "", job: "", message: "", time: "", x: 0, y: 0 };
-    const row = wrap.querySelector(".geek-item") || wrap;
+    const rows = Array.from(document.querySelectorAll(".geek-item")).filter((row) => {
+      if (!norm(row.querySelector(".geek-name")?.textContent)) return false;
+      if (!unreadOnly) return true;
+      const digits = norm(row.querySelector(".badge-count")?.textContent).replace(/\\D/g, "");
+      return (parseInt(digits, 10) || 0) > 0;
+    });
+    const total = rows.length;
+    const row = rows[rowIndex - 1];
+    if (!row) return { total, name: "", x: 0, y: 0 };
     row.scrollIntoView({ behavior: "instant", block: "center", inline: "nearest" });
     const rect = row.getBoundingClientRect();
     return {
       total,
-      name: norm(wrap.querySelector(".geek-name")?.textContent),
-      job: norm(wrap.querySelector(".source-job")?.textContent),
-      message: norm(wrap.querySelector(".push-text")?.textContent),
-      time: norm(wrap.querySelector(".time")?.textContent),
+      name: norm(row.querySelector(".geek-name")?.textContent),
       x: rect.left + rect.width / 2,
       y: rect.top + rect.height / 2,
     };
-  })(${JSON.stringify(params.index)})`));
+  })()`));
     if (!rowInfo.name) {
         throw new Error(`聊天列表序号 ${params.index} 不存在；当前${filter === 'unread' ? '未读' : '全部'}列表共 ${rowInfo.total} 条。`);
     }
@@ -479,6 +488,7 @@ export async function runOpenCandidateChatByIndex(page, params) {
     }
     await page.mouse.click(rowInfo.x, rowInfo.y, { delay: 40 });
     await sleepRandom(OPEN_CHAT_AFTER_ROW_CLICK_MS.min, OPEN_CHAT_AFTER_ROW_CLICK_MS.max);
+    await waitForOpenedCandidateChat(page, rowInfo.name);
     return renderOpenedCandidateChat(page, rowInfo.name);
 }
 export async function runOpenCandidateChat(page, candidateName, exact = true) {
@@ -602,47 +612,7 @@ export async function runOpenCandidateChat(page, candidateName, exact = true) {
         await page.mouse.click(clickPoint.x, clickPoint.y, { delay: 40 });
         await sleepRandom(OPEN_CHAT_AFTER_ROW_CLICK_MS.min, OPEN_CHAT_AFTER_ROW_CLICK_MS.max);
         try {
-            const expectedNameLiteral = JSON.stringify(foundName || targetName);
-            const exactLiteral = JSON.stringify(exact);
-            await page.waitForFunction(`(() => {
-          const name = ${expectedNameLiteral};
-          const exactMatch = ${exactLiteral};
-          const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
-          const matches = (value) => exactMatch ? value === name : value.includes(name);
-          const isVisible = (el) => {
-            if (!el) return false;
-            const rect = el.getBoundingClientRect();
-            const style = window.getComputedStyle(el);
-            return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
-          };
-          const selected = Array.from(document.querySelectorAll(".geek-item.selected")).find(isVisible);
-          const selectedName = norm(selected?.querySelector(".geek-name")?.textContent);
-          const root = Array.from(document.querySelectorAll(".base-info-single-container")).find(isVisible);
-          const detailName = norm(root?.querySelector(".name-box")?.textContent);
-          return matches(selectedName) && matches(detailName);
-        })()`, { timeout: 15_000 });
-            await page.waitForFunction(`(() => {
-          const isVisible = (el) => {
-            if (!el) return false;
-            const rect = el.getBoundingClientRect();
-            const style = window.getComputedStyle(el);
-            return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
-          };
-          const lists = Array.from(document.querySelectorAll(".chat-message-list")).filter(isVisible);
-          const list = lists[lists.length - 1];
-          if (!list) return false;
-          const items = list.querySelectorAll(".message-item");
-          if (!items || items.length === 0) return false;
-          const hasText = Array.from(items).some((item) => {
-            const txt =
-              item.querySelector(".item-friend .text span")?.textContent ??
-              item.querySelector(".item-myself .text span")?.textContent ??
-              item.querySelector(".item-system .message-card-top-title")?.textContent ??
-              "";
-            return txt.replace(/\\s+/g, " ").trim().length > 0;
-          });
-          return hasText;
-        })()`, { timeout: 20_000 });
+            await waitForOpenedCandidateChat(page, foundName);
         }
         catch {
             const state = (await page.evaluate(`(() => {
@@ -662,117 +632,7 @@ export async function runOpenCandidateChat(page, candidateName, exact = true) {
       })()`));
             throw new Error(`已尝试点击 ${foundName}，但未检测到对应聊天详情面板（selected=${state.selectedName || '空'}，detail=${state.detailName || '空'}）。`);
         }
-        let fullMessages = [];
-        let hasFriendResumeAttachment = false;
-        const scraped = (await page.evaluate(`(() => {
-      const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
-      const isVisible = (el) => {
-        if (!el) return false;
-        const rect = el.getBoundingClientRect();
-        const style = window.getComputedStyle(el);
-        return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
-      };
-      /** Boss 系统里的「消息优先提醒」增值服务条，对业务无意义，过滤掉 */
-      function isBossPriorityUpsellSystemText(text) {
-        return norm(text).indexOf("优先提醒") !== -1;
-      }
-      const lists = Array.from(document.querySelectorAll(".chat-message-list")).filter(isVisible);
-      const list = lists[lists.length - 1];
-      if (!list) {
-        throw new Error("未找到可见聊天消息列表（.chat-message-list）。");
-      }
-      const items = Array.from(list.querySelectorAll(".message-item"));
-      let currentTime = "";
-      const messages = [];
-      let hasFriendResumeAttachment = false;
-      for (const item of items) {
-        const timeNode = item.querySelector(".message-time .time");
-        if (timeNode) {
-          const t = norm(timeNode.textContent);
-          if (t) currentTime = t;
-        }
-        const friendRoot = item.querySelector(".item-friend");
-        let friendText = "";
-        if (friendRoot) {
-          friendText = norm(friendRoot.querySelector(".text > span")?.textContent);
-          if (!friendText) {
-            const resumeIcon = friendRoot.querySelector(".resume-icon");
-            const title = norm(friendRoot.querySelector(".message-card-top-title")?.textContent);
-            const cardBtn = norm(friendRoot.querySelector(".message-card-buttons .card-btn")?.textContent);
-            if (resumeIcon) hasFriendResumeAttachment = true;
-            if (title || cardBtn) {
-              const parts = [];
-              if (title) parts.push(title);
-              if (cardBtn) parts.push(cardBtn);
-              friendText = parts.length ? parts.join(" · ") : "";
-            }
-            if (!friendText) friendText = norm(friendRoot.querySelector(".text")?.textContent);
-          }
-        }
-        const myselfText = norm(item.querySelector(".item-myself .text span")?.textContent);
-        const systemText =
-          norm(item.querySelector(".item-system .message-card-top-title")?.textContent) ||
-          norm(item.querySelector(".item-system .text span")?.textContent);
-        if (friendText) {
-          messages.push({ text: friendText, time: currentTime, from: "friend" });
-        } else if (myselfText) {
-          messages.push({ text: myselfText, time: currentTime, from: "myself" });
-        } else if (systemText) {
-          if (!isBossPriorityUpsellSystemText(systemText)) {
-            messages.push({ text: systemText, time: currentTime, from: "system" });
-          }
-        }
-      }
-      return { messages, hasFriendResumeAttachment };
-    })()`));
-        fullMessages = scraped.messages;
-        hasFriendResumeAttachment = scraped.hasFriendResumeAttachment;
-        const detailLines = fullMessages.map((m) => {
-            const tag = chatRoleTag(m.from);
-            const timePart = m.time ? ` ${m.time}` : '';
-            return `${tag}${timePart} ${m.text}`.trimEnd();
-        });
-        const resumeStatus = hasFriendResumeAttachment ? '已获取' : '未获取';
-        const summary = await fetchCandidateSummary(page, foundName || targetName, exact);
-        const out = [
-            `成功进入候选人聊天：${foundName}`,
-            `简历获取状态: ${resumeStatus}`,
-        ];
-        const summaryLines = [];
-        const summaryName = summary.name || foundName || targetName;
-        summaryLines.push(`姓名: ${summaryName}`);
-        if (summary.active) {
-            summaryLines.push(`活跃状态: ${summary.active}`);
-        }
-        if (summary.basicFacts.length > 0) {
-            summaryLines.push(`基本信息: ${summary.basicFacts.join(' / ')}`);
-        }
-        if (summary.communicationPosition) {
-            summaryLines.push(`沟通职位: ${summary.communicationPosition}`);
-        }
-        if (summary.expectation) {
-            summaryLines.push(`期望: ${summary.expectation}`);
-        }
-        if (summary.recentExperience.length > 0) {
-            summaryLines.push('近期经历:');
-            summary.recentExperience.forEach((it, idx) => {
-                summaryLines.push(`${idx + 1}. ${it}`);
-            });
-        }
-        if (summaryLines.length > 0) {
-            out.push('', '人才摘要：', '', ...summaryLines);
-        }
-        if (summary.remark) {
-            out.push('', `备注: ${summary.remark}`);
-        }
-        out.push('', '完整聊天消息：');
-        if (detailLines.length > 0) {
-            out.push('', ...detailLines);
-        }
-        else {
-            out.push('', '(暂无)');
-        }
-        return out.join('\n');
+        return renderOpenedCandidateChat(page, foundName);
     }
     catch (e) {
         const message = e instanceof Error ? e.message : String(e);

@@ -13,40 +13,47 @@ import { assertRecommendPageReadyForPreview, isBossChatRecommendUrl, openRecomme
 import { assertNormalSearchPageReadyForPreview, isBossChatSearchUrl, openNormalSearchResumePreview, readNormalSearchSelectedJobLabel, } from './normal-search.js';
 export async function runPreview(options) {
     const target = options.candidateTarget.trim();
-    if (!target) {
-        throw new Error('请提供候选人姓名。');
+    const index = options.candidateIndex;
+    if (index !== undefined && (!Number.isSafeInteger(index) || index < 1)) {
+        throw new Error('候选人序号必须是从 1 开始的整数。');
+    }
+    if (!target && index === undefined) {
+        throw new Error('请提供候选人姓名或 --index <序号>。');
     }
     try {
         return await withBossSessionPage((page) => withWindowVisible(page, async () => {
             const url = page.url();
             let jobLine;
             let savedOriginal;
-            let opened;
+            let selected;
             if (isBossChatAiFormUrl(url)) {
+                if (index !== undefined) {
+                    throw new Error('旧深度搜索页不支持 --index；未导航或点击。');
+                }
                 await ensureInDeepSearchPage(page);
                 const label = await readAiFormSelectedJobLabel(page);
                 jobLine = `当前岗位：${label}`;
                 savedOriginal = await snapshotBossPageViewport(page);
-                opened = await openDeepSearchResumePreview(page, target);
+                const opened = await openDeepSearchResumePreview(page, target);
+                if (!opened)
+                    throw new Error('未在列表中找到该候选人，或点击未能打开简历预览。');
+                selected = { name: target };
             }
             else if (isBossChatRecommendUrl(url)) {
                 const frame = await assertRecommendPageReadyForPreview(page);
                 jobLine = '当前岗位：当前推荐列表';
                 savedOriginal = await snapshotBossPageViewport(page);
-                opened = await openRecommendResumePreview(frame, target);
+                selected = await openRecommendResumePreview(frame, target, index);
             }
             else if (isBossChatSearchUrl(url)) {
                 const frame = await assertNormalSearchPageReadyForPreview(page);
                 const label = await readNormalSearchSelectedJobLabel(frame);
                 jobLine = `当前岗位：${label}`;
                 savedOriginal = await snapshotBossPageViewport(page);
-                opened = await openNormalSearchResumePreview(frame, target);
+                selected = await openNormalSearchResumePreview(frame, target, index);
             }
             else {
                 throw new Error('当前不在推荐列表页、深度搜索页或常规搜索页，无法预览候选人。');
-            }
-            if (!opened) {
-                throw new Error('未在列表中找到该候选人，或点击未能打开简历预览。');
             }
             const outcome = await waitForCResumeIframeOrPaywall(page, ONLINE_RESUME_IFRAME_WAIT_MAX_MS);
             if (outcome !== 'iframe') {
@@ -62,7 +69,8 @@ export async function runPreview(options) {
                 throw new Error('在线简历 iframe 已出现，但内容未在预期时间内渲染完成。');
             }
             ensureAppDataLayout();
-            const fileName = `preview-${safeResumeScreenshotFileBase(target)}-${Date.now()}.png`;
+            const targetLabel = selected.index === undefined ? selected.name : `#${selected.index} ${selected.name}`;
+            const fileName = `preview-${safeResumeScreenshotFileBase(targetLabel)}-${Date.now()}.png`;
             const absPath = join(RESUME_SCREENSHOTS_DIR, fileName);
             const capture = await captureCResumeIframeToFile(page, savedOriginal, absPath);
             if (!capture.ok) {
@@ -70,7 +78,7 @@ export async function runPreview(options) {
                 throw new Error(capture.detail ?? '在线简历 iframe 截图失败。');
             }
             const disclaimer = '说明：平台对在线简历的每日可查看次数有限，请按需使用、谨慎查看。';
-            const head = [jobLine, `简历预览截图：${absPath}`, ''];
+            const head = [jobLine, `目标：${targetLabel}`, `简历预览截图：${absPath}`, ''];
             if (capture.detail) {
                 head.push(`⚠️ ${capture.detail}`, '');
             }

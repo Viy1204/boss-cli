@@ -453,17 +453,15 @@ async function captureOnlineResumeScreenshot(page, candidateLabel) {
 async function captureOnlineResumeScreenshotVisible(page, candidateLabel) {
     ensureAppDataLayout();
     const savedViewport = await snapshotBossPageViewport(page);
-    const opened = await page.evaluate(() => {
-        // 2026-07 改版：「在线简历」由 <a> 改成 <button>，只认 a.resume-btn-online 会取不到
-        const a = document.querySelector('a.resume-btn-online, .resume-btn-online');
-        if (!a || a.classList.contains('disabled'))
-            return false;
-        a.scrollIntoView({ block: 'center', inline: 'nearest' });
-        a.click();
-        return true;
-    });
+    const opened = await page.evaluate(`(() => {
+    const button = document.querySelector('.resume-btn-online');
+    if (!button || button.classList.contains('disabled')) return false;
+    button.scrollIntoView({ block: 'center', inline: 'nearest' });
+    button.click();
+    return true;
+  })()`);
     if (!opened) {
-        return null;
+        throw new Error('未找到可用的在线简历入口（.resume-btn-online）。');
     }
     const outcome = await waitForCResumeIframeOrPaywall(page, ONLINE_RESUME_IFRAME_WAIT_MAX_MS);
     if (outcome !== 'iframe') {
@@ -472,25 +470,21 @@ async function captureOnlineResumeScreenshotVisible(page, candidateLabel) {
         if (paywall) {
             throw new Error(paywall);
         }
-        return null;
+        throw new Error('点击后未出现在线简历 iframe（c-resume）。');
     }
     const ready = await waitForVisibleCResumeIframeReady(page);
     if (!ready) {
         await closeCResumePanel(page);
-        return null;
+        throw new Error('在线简历 iframe 已出现，但内容未在预期时间内渲染完成。');
     }
     const fileName = `online-resume-${safeResumeScreenshotFileBase(candidateLabel)}-${Date.now()}.png`;
     const absPath = join(RESUME_SCREENSHOTS_DIR, fileName);
     const capture = await captureCResumeIframeToFile(page, savedViewport, absPath);
     if (!capture.ok) {
         await closeCResumePanel(page);
-        // 空壳（只有水印）必须报错，不能当成「没找到入口」而静默返回，否则调用方会以为截图有效。
-        if (capture.blankShell) {
-            throw new Error(capture.detail ?? '在线简历截图疑似空壳。');
-        }
-        return null;
+        throw new Error(capture.detail ?? '在线简历 iframe 截图失败。');
     }
-    return absPath;
+    return { path: absPath, detail: capture.detail };
 }
 export async function runChatActionOnCurrentConversation(page, options) {
     const action = options.action;
@@ -502,20 +496,21 @@ export async function runChatActionOnCurrentConversation(page, options) {
         case 'resume': {
             await ensureInCandidateChat(page, '在线简历');
             const candidateLabel = await getCandidateLabelForResumeShot(page);
-            const resumeShotPath = await captureOnlineResumeScreenshot(page, candidateLabel);
-            if (resumeShotPath === null) {
-                throw new Error('未找到在线简历入口，或在线简历弹层未正常出现。');
-            }
+            const capture = await captureOnlineResumeScreenshot(page, candidateLabel);
+            const result = [
+                `在线简历截图文件：${capture.path}`,
+                capture.detail,
+            ].filter(Boolean).join('\n');
             if (!isResumeOcrEnabled()) {
-                return `在线简历操作成功，截图文件：${resumeShotPath}`;
+                return result;
             }
             try {
-                const ocr = await ocrResumePngToTextFile(resumeShotPath);
-                return `在线简历操作成功，\n在线简历 OCR 正文：\n\n${ocr.text}`;
+                const ocr = await ocrResumePngToTextFile(capture.path);
+                return `${result}\n在线简历 OCR 正文：\n\n${ocr.text}`;
             }
             catch (e) {
                 const msg = e instanceof Error ? e.message : String(e);
-                throw new Error(`在线简历截图成功，但 OCR 失败：${msg}`);
+                throw new Error(`${result}\n在线简历截图成功，但 OCR 失败：${msg}`, { cause: e });
             }
         }
         case 'agree-resume':

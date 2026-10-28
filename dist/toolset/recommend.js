@@ -5,11 +5,48 @@ import { ensurePage } from '../common/ensure_page.js';
 const BOSS_CHAT_RECOMMEND_URL = 'https://www.zhipin.com/web/chat/recommend';
 /** 会话内记录：通过 greet 新出现的推荐卡片（以 geekId 识别） */
 const sessionGreetProducedGeekIds = new Set();
-/**
- * 推荐列表里「一张候选人卡片」的根节点（新版 `.candidate-card-wrap` 与旧版 `.card-item` / `.geek-card` 并存）。
- * 在线简历预览：点击卡片主体 `.card-inner`，而非「在线简历」链接或「打招呼」。
- */
-const RECOMMEND_CARD_ROOT_SELECTOR = '.candidate-card-wrap, .card-list .card-item, .geek-list .geek-card';
+const RECOMMEND_CARD_ROOT_SELECTOR = '.candidate-card-wrap:not(.anonymous-geek-guide-card)';
+const RECOMMEND_SNAPSHOT_MAX_AGE_MS = 15 * 60 * 1000;
+const RECOMMEND_CANDIDATE_READER_SCRIPT = `
+  const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
+  const readIdentity = item => {
+    const inner = item.querySelector(".card-inner");
+    const geekId = norm(inner?.getAttribute("data-geekid"));
+    if (!geekId) throw new Error("推荐候选人缺少可核对平台标识 data-geekid；停止操作。");
+    const timeline = selector => Array.from(item.querySelectorAll(selector)).map(row => {
+      const time = Array.from(row.querySelectorAll(".join-text-wrap.time span")).map(el => norm(el.textContent)).filter(Boolean).join("-");
+      const content = Array.from(row.querySelectorAll(".join-text-wrap.content span")).map(el => norm(el.textContent)).filter(Boolean).join(" · ");
+      return [time, content].filter(Boolean).join(" ");
+    }).filter(Boolean).join("；");
+    const work = timeline(".work-exps .timeline-item");
+    const education = timeline(".edu-exps .timeline-item");
+    return {
+      geekId,
+      name: norm(item.querySelector(".name-wrap .name")?.textContent) || norm(item.querySelector(".name")?.textContent),
+      salary: norm(item.querySelector(".salary-wrap span")?.textContent),
+      baseInfo: Array.from(item.querySelectorAll(".base-info span")).map(el => norm(el.textContent)).filter(Boolean).join(" / "),
+      expect: norm(item.querySelector(".expect-wrap .content")?.textContent) || norm(item.querySelector(".expect-wrap .join-text-wrap")?.textContent),
+      experience: [work ? "工作: " + work : "", education ? "教育: " + education : ""].filter(Boolean).join(" | "),
+      advantage: norm(item.querySelector(".geek-desc .content")?.textContent),
+      highlights: [
+        ...Array.from(item.querySelectorAll(".operate .labels .label")),
+        ...Array.from(item.querySelectorAll(".tags-wrap .tag-item")),
+      ].map(el => norm(el.textContent)).filter(Boolean),
+    };
+  };
+`;
+const VALIDATE_RECOMMEND_SNAPSHOT_SCRIPT = `
+  const snapshot = window.__bossCliRecommendSnapshot;
+  if (!snapshot) throw new Error("缺少推荐列表快照；请先执行 boss recommend。");
+  if (Date.now() - snapshot.createdAt > ${RECOMMEND_SNAPSHOT_MAX_AGE_MS}) throw new Error("推荐列表快照已超过 15 分钟；请重新执行 boss recommend。");
+  const currentJob = norm(document.querySelector(".job-selecter-wrap .ui-dropmenu-label")?.textContent);
+  if (currentJob !== snapshot.job) throw new Error("推荐岗位已变化；请重新执行 boss recommend。");
+  const cards = Array.from(document.querySelectorAll(${JSON.stringify(RECOMMEND_CARD_ROOT_SELECTOR)}));
+  if (cards.length !== snapshot.cards.length || cards.some((card, index) =>
+    card !== snapshot.cards[index] || JSON.stringify(readIdentity(card)) !== snapshot.fingerprints[index])) {
+    throw new Error("推荐列表与快照身份、资料或顺序不一致；请重新执行 boss recommend。");
+  }
+`;
 export function isBossChatRecommendUrl(url) {
     try {
         const u = new URL(url);
@@ -185,70 +222,35 @@ export async function assertRecommendPageReadyForPreview(page) {
 }
 export async function readRecommendList(frame) {
     return (await frame.evaluate(`(() => {
-    const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
-    const cardSel = ${JSON.stringify(RECOMMEND_CARD_ROOT_SELECTOR)};
-    const cards = Array.from(document.querySelectorAll(cardSel));
-    return cards.map((item) => {
-      const inner = item.querySelector(".card-inner") || item;
-      const wrap = item.matches(".candidate-card-wrap")
-        ? item
-        : item.querySelector(".candidate-card-wrap");
-      const hasViewed = Boolean(
-        (wrap && wrap.classList.contains("has-viewed")) ||
-          (inner && inner.classList.contains("has-viewed")),
-      );
-      const geekId =
-        inner?.getAttribute("data-geekid") ??
-        inner?.getAttribute("data-geek") ??
-        "";
-      const name =
-        norm(item.querySelector(".name-wrap .name")?.textContent) ||
-        norm(item.querySelector(".name")?.textContent);
-      const salary = norm(item.querySelector(".salary-wrap span")?.textContent);
-      const baseInfo = Array.from(item.querySelectorAll(".base-info span"))
-        .map((el) => norm(el.textContent))
-        .filter(Boolean)
-        .join(" / ");
-      const expect =
-        norm(item.querySelector(".expect-wrap .content")?.textContent) ||
-        norm(item.querySelector(".expect-wrap .join-text-wrap")?.textContent);
-      const experience = norm(item.querySelector(".experience-wrap .join-text-wrap")?.textContent);
-      const advantage = norm(item.querySelector(".geek-desc .content")?.textContent);
-      const highlightLabels = [
-        ...Array.from(item.querySelectorAll(".operate .labels .label")),
-        ...Array.from(item.querySelectorAll(".tags-wrap .tag-item")),
-      ]
-        .map((el) => norm(el.textContent))
-        .filter(Boolean);
-      const highlights = [...new Set(highlightLabels)];
+    delete window.__bossCliRecommendSnapshot;
+    ${RECOMMEND_CANDIDATE_READER_SCRIPT}
+    const cards = Array.from(document.querySelectorAll(${JSON.stringify(RECOMMEND_CARD_ROOT_SELECTOR)}));
+    const identities = cards.map(readIdentity);
+    if (identities.some(item => !item.name)) throw new Error("推荐候选人缺少姓名；无法创建推荐列表快照。");
+    if (new Set(identities.map(item => item.geekId)).size !== identities.length) throw new Error("推荐候选人平台标识重复；无法创建推荐列表快照。");
+    const candidates = cards.map((item, index) => {
+      const inner = item.querySelector(".card-inner");
       const greetBtn = item.querySelector(".button-chat-wrap .btn.btn-greet");
-      const btnCls = greetBtn?.className ?? "";
-      const disabled =
-        !greetBtn ||
-        /disabled|forbid|ban/i.test(btnCls) ||
-        greetBtn.getAttribute("disabled") !== null;
-      const hasHistoryChat = (() => {
-        if (item.querySelector(".tooltip-wrap.chat-history .icon-chat-history")) return true;
-        const uses = Array.from(item.querySelectorAll("use"));
-        return uses.some((u) => {
+      const disabled = !greetBtn || /disabled|forbid|ban/i.test(greetBtn.className ?? "") || greetBtn.getAttribute("disabled") !== null;
+      const hasHistoryChat = !!item.querySelector(".tooltip-wrap.chat-history .icon-chat-history") ||
+        Array.from(item.querySelectorAll("use")).some(u => {
           const href = u.getAttribute("href") ?? u.getAttributeNS("http://www.w3.org/1999/xlink", "href") ?? "";
           return href.includes("icon-chat-history");
         });
-      })();
       return {
-        geekId,
-        name,
-        salary,
-        baseInfo,
-        expect,
-        experience,
-        advantage,
-        highlights,
+        ...identities[index], index: index + 1,
+        highlights: [...new Set(identities[index].highlights)],
         canGreet: !disabled,
         hasHistoryChat,
-        hasViewed,
+        hasViewed: item.classList.contains("has-viewed") || inner.classList.contains("has-viewed"),
       };
-    }).filter((x) => x.name);
+    });
+    window.__bossCliRecommendSnapshot = {
+      createdAt: Date.now(), cards,
+      job: norm(document.querySelector(".job-selecter-wrap .ui-dropmenu-label")?.textContent),
+      fingerprints: identities.map(item => JSON.stringify(item)),
+    };
+    return candidates;
   })()`));
 }
 export function renderRecommendList(candidates) {
@@ -272,7 +274,7 @@ export function renderRecommendList(candidates) {
             lines.push('  - 暂无');
             return lines;
         }
-        items.forEach((m, idx) => {
+        items.forEach((m) => {
             const advantageText = m.advantage ||
                 (m.highlights.length > 0 ? m.highlights.slice(0, 3).join(' / ') : '（无）');
             const fields = [
@@ -286,7 +288,7 @@ export function renderRecommendList(candidates) {
                 .filter(Boolean)
                 .join('｜');
             const nameWithViewed = m.hasViewed ? `${m.name} | 看过` : m.name;
-            lines.push(`  - ${idx + 1}. ${nameWithViewed}｜${fields}`);
+            lines.push(`  - ${m.index}. ${nameWithViewed}｜${fields}`);
             lines.push(`    优势: ${advantageText}`);
         });
         return lines;
@@ -367,61 +369,35 @@ export function markGreetProduced(before, after) {
         }
     });
 }
-/**
- * 在推荐 iframe 内根据姓名打开在线简历预览：点击候选人卡片主体 `.card-inner`（与侧栏「打招呼」分离）。
- * 父页随后出现 `c-resume` iframe（如 `source=recommend`）。旧版仅有「在线简历」链接时仍尝试点击链接。
- */
-export async function openRecommendResumePreview(frame, target) {
-    const raw = target.trim();
-    const targetLiteral = JSON.stringify(raw);
-    const opened = (await frame.evaluate(`(() => {
-    const raw = ${targetLiteral};
-    const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
-    const cardSel = ${JSON.stringify(RECOMMEND_CARD_ROOT_SELECTOR)};
-    const cards = Array.from(document.querySelectorAll(cardSel));
-    if (cards.length === 0) return false;
-    const targetCard = cards.find((item) => {
-      const name =
-        norm(item.querySelector(".name-wrap .name")?.textContent) ||
-        norm(item.querySelector(".name")?.textContent);
-      return name === raw || name.includes(raw);
-    }) ?? null;
-    if (!targetCard) return false;
-
-    function tryOpen(el) {
-      if (!(el instanceof HTMLElement)) return false;
-      if (el.classList.contains("disabled")) return false;
-      const st = window.getComputedStyle(el);
-      if (st.pointerEvents === "none" || Number(st.opacity) < 0.3) return false;
-      el.scrollIntoView({ block: "center", inline: "nearest" });
-      el.click();
-      return true;
+export async function openRecommendResumePreview(frame, target, index) {
+    const selected = (await frame.evaluate(`(() => {
+    ${RECOMMEND_CANDIDATE_READER_SCRIPT}
+    ${VALIDATE_RECOMMEND_SNAPSHOT_SCRIPT}
+    const raw = ${JSON.stringify(target.trim())};
+    const matches = card => raw && readIdentity(card).name.includes(raw);
+    let index = ${JSON.stringify(index ?? null)};
+    if (index !== null) {
+      if (!Number.isSafeInteger(index) || index < 1 || index > cards.length) throw new Error("推荐快照中没有此序号。");
+      if (raw && !matches(cards[index - 1])) throw new Error("--index 与候选人姓名不匹配；未点击候选人。");
+    } else {
+      const hits = cards.map((card, i) => matches(card) ? i + 1 : null).filter(i => i !== null);
+      if (hits.length !== 1) throw new Error("推荐列表姓名没有唯一匹配；请核对后用 --index 指定。");
+      index = hits[0];
     }
-
+    const targetCard = cards[index - 1];
+    const name = readIdentity(targetCard).name;
     const inner = targetCard.querySelector(".card-inner");
-    if (inner instanceof HTMLElement) {
-      inner.scrollIntoView({ block: "center", inline: "nearest" });
-      inner.click();
-      return true;
-    }
-
-    const resumeOnline = targetCard.querySelector("a.resume-btn-online");
-    if (tryOpen(resumeOnline)) return true;
-    const hrefResume = targetCard.querySelector('a[href*="c-resume"], a[href*="frame/c-resume"]');
-    if (tryOpen(hrefResume)) return true;
-
-    const links = Array.from(targetCard.querySelectorAll("a, button, .btn")).filter((node) => {
-      const t = norm(node.textContent);
-      return /在线简历|查看简历|简历预览|预览/.test(t);
-    });
-    if (links.length > 0 && tryOpen(links[0])) return true;
-
-    return false;
+    if (!(inner instanceof HTMLElement)) throw new Error("推荐候选人缺少简历入口 .card-inner；未点击。");
+    const style = window.getComputedStyle(inner);
+    if (inner.classList.contains("disabled") || style.pointerEvents === "none" || Number(style.opacity) < 0.3) throw new Error("推荐候选人简历入口不可用；未点击。");
+    inner.scrollIntoView({ block: "center", inline: "nearest" });
+    (() => { ${VALIDATE_RECOMMEND_SNAPSHOT_SCRIPT} })();
+    if (targetCard.querySelector(".card-inner") !== inner) throw new Error("推荐简历入口已变化；未点击。");
+    inner.click();
+    return { name, index };
   })()`));
-    if (opened) {
-        await sleepRandom(RESUME_PREVIEW_OPEN_GAP_MS.min, RESUME_PREVIEW_OPEN_GAP_MS.max);
-    }
-    return opened;
+    await sleepRandom(RESUME_PREVIEW_OPEN_GAP_MS.min, RESUME_PREVIEW_OPEN_GAP_MS.max);
+    return selected;
 }
 export async function runRecommend(jobKeyword) {
     try {

@@ -126,8 +126,11 @@ function nonSearchFixture(url) {
   }
   const name = new El('张三');
   const contact = new El('打招呼');
+  const inner = new El();
+  inner.getAttribute = attribute => attribute === 'data-geekid' ? 'fixture-candidate' : null;
   const card = new El();
   card.querySelector = sel => ['.name-wrap .name', '.name', '.geek-name'].includes(sel) ? name
+    : sel === '.card-inner' ? inner
     : ['.button-chat-wrap .btn.btn-greet', '.geek-chat .btn-ai-v2', '.geek-chat'].includes(sel) ? contact : null;
   const document = {
     querySelector: () => null,
