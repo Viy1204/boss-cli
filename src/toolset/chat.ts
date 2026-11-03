@@ -7,7 +7,7 @@ import {
   sleepRandom,
 } from '../browser/index.js';
 import { isBossChatIndexUrl } from '../common/auth.js';
-import { ensureChatListReady } from './list.js';
+import { ensureChatListReady, UNREAD_BADGE_COUNT_JS } from './list.js';
 
 type ChatFrom = 'friend' | 'myself' | 'system' | 'unknown';
 
@@ -536,14 +536,14 @@ export async function runOpenCandidateChatByIndex(
   }
 
   const rowInfo = (await page.evaluate(`(() => {
+    ${UNREAD_BADGE_COUNT_JS}
     const rowIndex = ${JSON.stringify(params.index)};
     const unreadOnly = ${JSON.stringify(filter === 'unread')};
     const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
     const rows = Array.from(document.querySelectorAll(".geek-item")).filter((row) => {
       if (!norm(row.querySelector(".geek-name")?.textContent)) return false;
       if (!unreadOnly) return true;
-      const digits = norm(row.querySelector(".badge-count")?.textContent).replace(/\\D/g, "");
-      return (parseInt(digits, 10) || 0) > 0;
+      return unreadCountFromBadgeText(norm(row.querySelector(".badge-count")?.textContent)) > 0;
     });
     const total = rows.length;
     const row = rows[rowIndex - 1];
