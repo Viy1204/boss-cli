@@ -1,7 +1,7 @@
 import type { Page } from 'puppeteer-core';
 import {
   LIST_FILTER_GAP_MS,
-  LIST_MIN_BEFORE_EMPTY_OK_MS,
+  LIST_MIN_BEFORE_READY_MS,
   LIST_POLL_MS,
   sleepRandom,
 } from '../browser/index.js';
@@ -17,34 +17,48 @@ type CandidateItem = {
   unreadCount: number;
 };
 
+/** 未读角标解析：数字优先且 >0；否则含「新」至少计 1 */
+export const UNREAD_BADGE_COUNT_JS = `const unreadCountFromBadgeText = (badgeText) => {
+  const text = badgeText.replace(/\\s+/g, " ").trim();
+  const count = parseInt(text.replace(/\\D/g, ""), 10) || 0;
+  if (count > 0) return count;
+  return text.includes("新") ? 1 : 0;
+};`;
+
 async function waitForCandidateListSettled(
   page: Page,
-  opts: { timeoutMs: number; pollMsMin: number; pollMsMax: number; minMsBeforeEmptyOk: number },
+  opts: { timeoutMs: number; pollMsMin: number; pollMsMax: number; minMsBeforeReady: number },
 ): Promise<void> {
   const start = Date.now();
-  let prev = -1;
+  let prevKey: string | null = null;
   let stable = 0;
+  let lastCount = 0;
   while (Date.now() - start < opts.timeoutMs) {
-    const n = (await page.evaluate(
-      `(() => document.querySelectorAll(".geek-item").length)()`,
-    )) as number;
-    const elapsed = Date.now() - start;
-    if (n === prev) {
+    const snapshot = (await page.evaluate(
+      `(() => {
+        const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
+        return Array.from(document.querySelectorAll(".geek-item")).map((el) => [
+          norm(el.querySelector(".geek-name")?.textContent),
+          norm(el.querySelector(".badge-count")?.textContent),
+        ]);
+      })()`,
+    )) as Array<[string, string]>;
+    lastCount = snapshot.length;
+    const key = JSON.stringify(snapshot);
+    if (key === prevKey) {
       stable++;
     } else {
-      prev = n;
+      prevKey = key;
       stable = 1;
     }
-    if (stable >= 2) {
-      if (n > 0) {
-        return;
-      }
-      if (n === 0 && elapsed >= opts.minMsBeforeEmptyOk) {
-        return;
-      }
+    if (Date.now() - start >= opts.minMsBeforeReady && stable >= 2) {
+      return;
     }
     await sleepRandom(opts.pollMsMin, opts.pollMsMax);
   }
+  throw new Error(
+    `候选人列表在 ${opts.timeoutMs}ms 内未稳定（仍在变化），拒绝读取未就绪数据。最后快照行数：${lastCount}`,
+  );
 }
 
 async function clickChatFilterTab(page: Page, label: string): Promise<void> {
@@ -116,7 +130,7 @@ export async function ensureChatListReady(
     timeoutMs: 18_000,
     pollMsMin: LIST_POLL_MS.min,
     pollMsMax: LIST_POLL_MS.max,
-    minMsBeforeEmptyOk: LIST_MIN_BEFORE_EMPTY_OK_MS,
+    minMsBeforeReady: LIST_MIN_BEFORE_READY_MS,
   });
 }
 
@@ -133,6 +147,7 @@ export async function runGetCandidateList(
 
       const items = (await page.evaluate(
         `(() => {
+          ${UNREAD_BADGE_COUNT_JS}
           const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
           return Array.from(document.querySelectorAll(".geek-item")).map((el) => {
             const name = norm(el.querySelector(".geek-name")?.textContent);
@@ -140,11 +155,7 @@ export async function runGetCandidateList(
             const time = norm(el.querySelector(".time")?.textContent);
             const message = norm(el.querySelector(".push-text")?.textContent);
             const badge = el.querySelector(".badge-count");
-            let unreadCount = 0;
-            if (badge) {
-              const digits = norm(badge.textContent).replace(/\\D/g, "");
-              if (digits) unreadCount = parseInt(digits, 10) || 0;
-            }
+            const unreadCount = unreadCountFromBadgeText(norm(badge?.textContent));
             return { name, job, time, message, unreadCount };
           });
         })()`,

@@ -56,8 +56,8 @@ export declare const LIST_POLL_MS: {
     readonly min: 420;
     readonly max: 780;
 };
-/** 列表为空时至少等待多久才认为稳定 */
-export declare const LIST_MIN_BEFORE_EMPTY_OK_MS = 5000;
+/** 列表（含未读角标）读取前的稳定观察窗口下限 */
+export declare const LIST_MIN_BEFORE_READY_MS = 5000;
 /** 登录态探测轮询间隔 */
 export declare const PROBE_LOGIN_POLL_MS: {
     readonly min: 520;

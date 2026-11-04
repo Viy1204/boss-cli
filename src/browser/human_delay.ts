@@ -39,8 +39,8 @@ export const RESUME_PREVIEW_OPEN_GAP_MS = { min: 420, max: 1100 } as const;
 /** 列表稳定轮询间隔（随机） */
 export const LIST_POLL_MS = { min: 420, max: 780 } as const;
 
-/** 列表为空时至少等待多久才认为稳定 */
-export const LIST_MIN_BEFORE_EMPTY_OK_MS = 5000;
+/** 列表（含未读角标）读取前的稳定观察窗口下限 */
+export const LIST_MIN_BEFORE_READY_MS = 5000;
 
 /** 登录态探测轮询间隔 */
 export const PROBE_LOGIN_POLL_MS = { min: 520, max: 980 } as const;

@@ -1,6 +1,6 @@
 import { CHAT_HISTORY_DIALOG_WAIT_MS, CHAT_HISTORY_TAB_SWITCH_MS, OPEN_CHAT_AFTER_ROW_CLICK_MS, OPEN_CHAT_SCROLL_GAP_MS, sleepRandom, } from '../browser/index.js';
 import { isBossChatIndexUrl } from '../common/auth.js';
-import { ensureChatListReady } from './list.js';
+import { ensureChatListReady, UNREAD_BADGE_COUNT_JS } from './list.js';
 /**
  * 从 `.geek-item-wrap` 向上找会话列表的滚动容器，注入后可直接用局部变量 `scroller`（可能为 null）。
  * Boss 现版本的列表容器是 `.user-list.b-scroll-stable`，`overflow-y: hidden` + 自绘滚动条，
@@ -456,14 +456,14 @@ export async function runOpenCandidateChatByIndex(page, params) {
         throw new Error('当前不在沟通列表页（/web/chat/index），无法打开候选人聊天。');
     }
     const rowInfo = (await page.evaluate(`(() => {
+    ${UNREAD_BADGE_COUNT_JS}
     const rowIndex = ${JSON.stringify(params.index)};
     const unreadOnly = ${JSON.stringify(filter === 'unread')};
     const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
     const rows = Array.from(document.querySelectorAll(".geek-item")).filter((row) => {
       if (!norm(row.querySelector(".geek-name")?.textContent)) return false;
       if (!unreadOnly) return true;
-      const digits = norm(row.querySelector(".badge-count")?.textContent).replace(/\\D/g, "");
-      return (parseInt(digits, 10) || 0) > 0;
+      return unreadCountFromBadgeText(norm(row.querySelector(".badge-count")?.textContent)) > 0;
     });
     const total = rows.length;
     const row = rows[rowIndex - 1];

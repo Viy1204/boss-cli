@@ -117,21 +117,37 @@ function fixture(config = {}) {
   document.append(list);
   const candidates = config.rows ?? [{ name: '梁伟佳', badge: '1' }];
   const rows = candidates.map((candidate, index) => {
-    const row = new Element('geek-item', '', [
+    const hasBadge = candidate.badge !== null;
+    const badge = hasBadge
+      ? new Element('badge-count', candidate.badgeTextDelay === undefined ? candidate.badge ?? '' : '')
+      : null;
+    const children = [
       new Element('geek-name', candidate.name),
       new Element('source-job', candidate.job ?? '工程师'),
       new Element('time', '今天'),
       new Element('push-text', '候选人消息'),
-      new Element('badge-count', candidate.badge ?? ''),
-    ]);
+    ];
+    if (hasBadge && candidate.badgeDelay === undefined) children.push(badge);
+    const row = new Element('geek-item', '', children);
     row.rect = { left: 0, top: 100 + index * 40, width: 300, height: 30 };
+    if (hasBadge) {
+      if (candidate.badgeDelay !== undefined) {
+        schedule(candidate.badgeDelay, () => row.append(badge));
+      }
+      if (candidate.badgeTextDelay !== undefined) {
+        schedule(candidate.badgeTextDelay, () => { badge.ownText = candidate.badge ?? ''; });
+      }
+      for (const update of candidate.badgeUpdates ?? []) {
+        schedule(update.delay, () => { badge.ownText = update.text; });
+      }
+    }
     return row;
   });
   const wraps = rows.map(row => new Element('geek-item-wrap', '', [row]));
   const refreshList = () => {
     list.children = [];
     const visible = state.tab === 'unread' && !config.unreadTabShowsAll
-      ? wraps.filter(wrap => Number.parseInt(wrap.querySelector('.badge-count').textContent, 10) > 0)
+      ? wraps.filter(wrap => Number.parseInt(wrap.querySelector('.badge-count')?.textContent ?? '', 10) > 0)
       : wraps;
     list.append(...visible);
   };
@@ -225,8 +241,8 @@ function fixture(config = {}) {
   };
   const browser = {
     LIST_FILTER_GAP_MS: { min: 1, max: 1 },
-    LIST_POLL_MS: { min: 1, max: 1 },
-    LIST_MIN_BEFORE_EMPTY_OK_MS: 0,
+    LIST_POLL_MS: { min: 500, max: 500 },
+    LIST_MIN_BEFORE_READY_MS: 5000,
     CHAT_HISTORY_DIALOG_WAIT_MS: { min: 1, max: 1 },
     CHAT_HISTORY_TAB_SWITCH_MS: { min: 1, max: 1 },
     OPEN_CHAT_AFTER_ROW_CLICK_MS: { min: 1, max: 1 },
@@ -375,4 +391,98 @@ test('按姓名包含匹配后等待实际命中的完整姓名', async () => {
   const f = fixture();
   assert.match(await f.chat.runOpenCandidateChat(f.page, '伟佳', false), /姓名: 梁伟佳/);
   assert.deepEqual(f.state.clicked, ['梁伟佳']);
+});
+
+test('「新」角标按一条未读计，list 与 chat --index 选中同一人', async () => {
+  const rows = [
+    { name: '已读候选人', badge: '' },
+    { name: '新角标候选人', badge: '新' },
+    { name: '数字候选人', badge: '2' },
+    { name: '无角标候选人', badge: null },
+    { name: '空文本候选人', badge: ' ' },
+    { name: '零角标候选人', badge: '0' },
+    { name: '其他文本候选人', badge: '置顶' },
+    { name: '超量候选人', badge: '99+' },
+    { name: '空白新候选人', badge: '  新  ' },
+    { name: '包含新候选人', badge: '新消息' },
+    { name: '新数字候选人', badge: '新3' },
+  ];
+  const f = fixture({ rows, unreadTabShowsAll: true });
+  const listed = await f.list.runGetCandidateList({ unreadOnly: true });
+  assert.match(listed, /未读筛选：共 6 人/);
+  assert.match(listed, /1\. 新角标候选人｜.*未读:1/);
+  assert.match(listed, /2\. 数字候选人｜.*未读:2/);
+  assert.match(listed, /3\. 超量候选人｜.*未读:99/);
+  assert.match(listed, /4\. 空白新候选人｜.*未读:1/);
+  assert.match(listed, /5\. 包含新候选人｜.*未读:1/);
+  assert.match(listed, /6\. 新数字候选人｜.*未读:3/);
+  assert.doesNotMatch(listed, /已读候选人|无角标候选人|空文本候选人|零角标候选人|其他文本候选人/);
+  const output = await f.chat.runOpenCandidateChatByIndex(f.page, {
+    index: 1, filter: 'unread', expectedName: '新角标候选人', exact: true,
+  });
+  assert.match(output, /成功进入候选人聊天：新角标候选人/);
+  assert.deepEqual(f.state.clicked, ['新角标候选人']);
+});
+
+test('角标节点延迟出现时 list 与 chat --index 按最终角标处理', async () => {
+  const rows = [
+    { name: '早到候选人', badge: '1' },
+    { name: '迟到候选人', badge: '新', badgeDelay: 2500 },
+  ];
+  const f = fixture({ rows, unreadTabShowsAll: true });
+  const listed = await f.list.runGetCandidateList({ unreadOnly: true });
+  assert.match(listed, /未读筛选：共 2 人/);
+  assert.match(listed, /2\. 迟到候选人｜.*未读:1/);
+  const output = await f.chat.runOpenCandidateChatByIndex(f.page, {
+    index: 2, filter: 'unread', expectedName: '迟到候选人', exact: true,
+  });
+  assert.match(output, /成功进入候选人聊天：迟到候选人/);
+  assert.deepEqual(f.state.clicked, ['迟到候选人']);
+});
+
+test('空角标壳延迟填文字时按填充后的角标处理', async () => {
+  const rows = [
+    { name: '早到候选人', badge: '3' },
+    { name: '填充候选人', badge: '2', badgeTextDelay: 2500 },
+  ];
+  const f = fixture({ rows, unreadTabShowsAll: true });
+  const listed = await f.list.runGetCandidateList({ unreadOnly: true });
+  assert.match(listed, /2\. 填充候选人｜.*未读:2/);
+  const output = await f.chat.runOpenCandidateChatByIndex(f.page, {
+    index: 2, filter: 'unread', expectedName: '填充候选人', exact: true,
+  });
+  assert.match(output, /成功进入候选人聊天：填充候选人/);
+});
+
+test('列表数量不变但角标迟到变化时读取最终值', async () => {
+  const rows = [
+    { name: '候选人甲', badge: '0', badgeUpdates: [{ delay: 2500, text: '新' }] },
+    { name: '候选人乙', badge: '1' },
+  ];
+  const f = fixture({ rows, unreadTabShowsAll: true });
+  const listed = await f.list.runGetCandidateList({ unreadOnly: true });
+  assert.match(listed, /未读筛选：共 2 人/);
+  assert.match(listed, /1\. 候选人甲｜.*未读:1/);
+  const output = await f.chat.runOpenCandidateChatByIndex(f.page, {
+    index: 1, filter: 'unread', expectedName: '候选人甲', exact: true,
+  });
+  assert.match(output, /成功进入候选人聊天：候选人甲/);
+});
+
+test('零未读与空列表都在观察窗口结束后正常结束', async () => {
+  const f = fixture({
+    rows: [{ name: '已读甲', badge: '' }, { name: '零甲', badge: '0' }, { name: '无角标甲', badge: null }],
+  });
+  assert.match(await f.list.runGetCandidateList({ unreadOnly: true }), /未读筛选：共 0 人/);
+  const empty = fixture({ rows: [] });
+  assert.match(await empty.list.runGetCandidateList(), /候选人明细：暂无/);
+});
+
+test('角标持续变化达到超时时报错而非返回未就绪数据', async () => {
+  const badgeUpdates = Array.from({ length: 40 }, (_, index) => ({
+    delay: index * 500 + 1,
+    text: 'v' + index,
+  }));
+  const f = fixture({ rows: [{ name: '变动候选人', badge: 'start', badgeUpdates }] });
+  await assert.rejects(f.list.runGetCandidateList(), /未稳定/);
 });
