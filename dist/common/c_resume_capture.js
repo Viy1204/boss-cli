@@ -45,10 +45,11 @@ const CLOSE_C_RESUME_PANEL_SCRIPT = `(() => {
 })()`;
 const C_RESUME_CLOSE_AFTER_CAPTURE_DELAY_MS = 3_000;
 const VISIBLE_C_RESUME_IN_FRAME_SCRIPT = `(() => {
-  var iframe = document.querySelector(${JSON.stringify(C_RESUME_IFRAME_SELECTOR)});
-  if (!(iframe instanceof HTMLElement)) return false;
-  var r = iframe.getBoundingClientRect();
-  return r.width > 8 && r.height > 8;
+  return Array.from(document.querySelectorAll(${JSON.stringify(C_RESUME_IFRAME_SELECTOR)})).some((iframe) => {
+    if (!(iframe instanceof HTMLElement)) return false;
+    var r = iframe.getBoundingClientRect();
+    return r.width > 8 && r.height > 8;
+  });
 })()`;
 export async function frameHasVisibleCResumeIframe(frame) {
     try {
