@@ -72,7 +72,7 @@ withBossSessionPage(callback)
   │
   ├── ensureBrowserSession()           ← 获取健康的浏览器+页面
   ├── getPageRef() / pickExistingPage  ← 确认为 zhipin.com 页面
-  ├── bringToFrontUnlessMinimized(page)   ← 窗口已最小化就不抢前台；BOSS_BROWSER_NO_FOREGROUND=true 一律不抢
+  ├── bringToFrontUnlessMinimized(page)   ← 默认不前置（仍为有头）；显式 BOSS_BROWSER_NO_FOREGROUND=false 时才考虑前置，且仍尊重最小化
   │
   ├── page.evaluateOnNewDocument()     ← 页面级防御：
   │   ├── navigator.webdriver → undefined

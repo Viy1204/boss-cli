@@ -26,6 +26,7 @@
 - 安装后的 `boss` 无参数会报错退出；交互模式仅由源码开发命令 `npm run dev` 启动，输入 `exit` / `quit` 或按 Ctrl+C 结束。`boss help`、`boss --help`、`boss -h` 输出同一份帮助。
 - `version` 显示当前安装包名和版本并检查 npm；`update` 通过 npm 全局更新当前安装包，本 fork 为 `@viyzhu/boss-cli-fork`。
 - 浏览器默认有头且跨命令常驻。`BOSS_BROWSER_HEADLESS` 的有效值优先于 `RECRUIT_BROWSER_HIDDEN`；修改配置不影响已运行的实例，须先 `boss shutdown` 再执行下一条业务命令。`shutdown` 保留浏览器数据目录，登录是否仍有效以平台为准。
+- 普通会话（含 `list --unread`）默认不主动前置窗口，与有头模式独立。`BOSS_BROWSER_NO_FOREGROUND` 未设置或为空时采用该默认；显式 `false` 可恢复前置请求，但仍不拉起已最小化窗口。登录保留显式唤起，简历截图仍可能临时恢复窗口，首次启动浏览器也可能显示窗口。
 - `jd` 先按请求名称查找 `~/.boss-cli/jd/` 下的 Markdown 缓存，命中即返回；无过期时间或刷新参数。`reload` 不更新 JD 缓存。
 - `action resume` 和 `preview` 直接读取在线简历，无须先索要附件或等对方回复；推荐/搜索预览也无须先 `greet`。默认保存 PNG 并输出截图路径，目录为 `~/.boss-cli/.cache/resume-screenshots/`。OCR 默认关闭，显式设置 `BOSS_RESUME_OCR=1` 并配置百度密钥后才启用；OCR 为截图识别文本，不是结构化简历 JSON；页面折叠的“查看全部”等内容不会自动展开，不能据此声称已取到全文。开启 OCR 后仍输出截图路径；截图警告与失败原因保留。
 - `preview [姓名] --index <序号>` 使用最近一次 `recommend` / `search` 的 1-based 序号，姓名与序号同时提供时必须匹配同一人；姓名匹配多张卡片时拒绝。两种列表快照有效期均为 15 分钟，缺失、过期、页面刷新、卡片重建、列表换序或资料变化后必须重新执行对应列表命令，不自动重搜。推荐按全列表统一编号，分组不重置序号。`preview` 不支持 `--job`；旧深搜不支持序号预览。

@@ -269,7 +269,7 @@ CLI 会核对本次关键词、岗位响应和当前卡片的候选人标识顺�
 | --- | --- |
 | `CHROME_PATH` 或 `PUPPETEER_EXECUTABLE_PATH` | 浏览器可执行文件的绝对路径 |
 | `BOSS_SEARCH_CITY` | `search` 未传 `--city` 时使用的城市 |
-| `BOSS_BROWSER_NO_FOREGROUND=true` | 普通命令不主动把浏览器切到前台；`login` 仍会显示窗口，简历截图可能临时调整窗口 |
+| `BOSS_BROWSER_NO_FOREGROUND` | 普通命令默认不主动前置窗口；未设置、空值或 `true` 保持后台，显式 `false` 恢复前置请求。与有头／无头模式独立；`login` 仍会显示窗口，简历截图可能临时调整窗口 |
 | `BOSS_BROWSER_HEADLESS` | 本 CLI 的无头模式覆盖项，优先于 `RECRUIT_BROWSER_HIDDEN`；未设置时跟随共读开关，仍无有效值时默认有界面 |
 | `RECRUIT_BROWSER_HIDDEN` | 招聘工具链共用的浏览器隐藏开关；本 CLI 在未收到有效覆盖时默认有界面 |
 | `BOSS_RESUME_OCR=1` | 显式开启百度在线 OCR，默认关闭 |

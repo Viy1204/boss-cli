@@ -143,9 +143,9 @@ export declare function connectBrowser(options?: ConnectBrowserOptions): Promise
 /**
  * 是否禁止 CLI 把 Boss 窗口抢到前台。
  *
- * 默认允许：`page.bringToFront()` 走 `Target.activateTarget`，Windows 上会把**最小化**的窗口
- * 还原并夺取前台焦点。把 CLI 接进后台系统定时跑的人（例如把 boss-cli 打通到内部招聘系统）
- * 会被每条命令弹一次窗口打断办公，所以给一个显式关闭项。
+ * 默认不前置，避免普通读取打断其他应用；这与默认有头模式是独立策略。
+ * `BOSS_BROWSER_NO_FOREGROUND=false` 可恢复旧的前置请求，仍尊重已最小化窗口。
+ * 登录的显式唤起和在线简历截图的临时可见处理由各自入口负责。
  */
 export declare function resolveNoForegroundFromEnv(): boolean;
 export type BringToFrontOutcome = 'raised' | 'skipped-env' | 'skipped-minimized';

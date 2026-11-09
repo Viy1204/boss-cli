@@ -15,22 +15,34 @@ function withEnv(value, fn) {
   }
 }
 
-test('默认允许抢前台，兼容原有行为', () => {
-  withEnv(undefined, () => assert.equal(resolveNoForegroundFromEnv(), false));
-  assert.equal(decideBringToFront('normal', false), 'raised');
-  assert.equal(decideBringToFront(undefined, false), 'raised');
+test('普通命令默认不前置，未配置或空值采用相同默认策略', () => {
+  for (const value of [undefined, '', '   ']) {
+    withEnv(value, () => {
+      const noForeground = resolveNoForegroundFromEnv();
+      assert.equal(noForeground, true, 'DEFAULT_NO_FOREGROUND');
+      assert.equal(decideBringToFront('normal', noForeground), 'skipped-env');
+      assert.equal(decideBringToFront(undefined, noForeground), 'skipped-env');
+    });
+  }
 });
 
-test('人把窗口最小化了，命令不能把它拽回前台', () => {
+test('人把窗口最小化了，即使显式允许前置也不能把它拽回前台', () => {
   assert.equal(decideBringToFront('minimized', false), 'skipped-minimized');
 });
 
-test('BOSS_BROWSER_NO_FOREGROUND 显式关闭后任何状态都不抢', () => {
-  for (const v of ['true', '1', 'yes', 'Y']) {
-    withEnv(v, () => assert.equal(resolveNoForegroundFromEnv(), true), v);
+test('BOSS_BROWSER_NO_FOREGROUND 真值明确禁止前置', () => {
+  for (const value of ['true', '1', 'yes', 'Y']) {
+    withEnv(value, () => assert.equal(resolveNoForegroundFromEnv(), true), value);
   }
   assert.equal(decideBringToFront('normal', true), 'skipped-env');
-  for (const v of ['false', '0', '', 'maybe']) {
-    withEnv(v, () => assert.equal(resolveNoForegroundFromEnv(), false), v);
+});
+
+test('显式关闭不前置策略时保留原有激活行为', () => {
+  for (const value of ['false', 'FALSE', '0', 'no', 'N', 'maybe']) {
+    withEnv(value, () => assert.equal(resolveNoForegroundFromEnv(), false), value);
   }
+  withEnv('false', () => {
+    assert.equal(decideBringToFront('normal', resolveNoForegroundFromEnv()), 'raised');
+    assert.equal(decideBringToFront(undefined, resolveNoForegroundFromEnv()), 'raised');
+  });
 });
