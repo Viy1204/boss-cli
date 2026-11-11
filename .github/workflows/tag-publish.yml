@@ -24,7 +24,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   publish:
+    needs: ci
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -55,13 +59,15 @@ jobs:
       - name: Resolve target version
         id: version
         if: ${{ steps.npm_gate.outputs.publish == 'true' }}
+        env:
+          REQUESTED_VERSION: ${{ github.event.inputs.version }}
         run: |
           set -euo pipefail
           current_version="$(node -p "require('./package.json').version")"
           if [[ "${GITHUB_REF_NAME:-}" == v* ]]; then
             target_version="${GITHUB_REF_NAME#v}"
-          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
-            target_version="${{ github.event.inputs.version }}"
+          elif [[ -n "$REQUESTED_VERSION" ]]; then
+            target_version="$REQUESTED_VERSION"
           else
             target_version="$current_version"
           fi
@@ -105,7 +111,10 @@ jobs:
       - name: Check published npm version
         id: npm_version
         if: ${{ steps.npm_gate.outputs.publish == 'true' }}
+        env:
+          DIST_TAG: ${{ steps.version.outputs.dist_tag }}
         run: |
+          set -euo pipefail
           version="${{ steps.version.outputs.target }}"
           pkg="$(node -p "require('./package.json').name")"
           echo "name=$pkg" >> "$GITHUB_OUTPUT"
@@ -114,6 +123,12 @@ jobs:
             echo "${pkg} ${version} is already published; skipping npm publish."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+          current_tag="$(npm view "$pkg" "dist-tags.${DIST_TAG}" --prefer-online --registry=https://registry.npmjs.org/)"
+          if [ "$current_tag" = "$version" ]; then
+            echo "tag_matches=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag_matches=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Check publish payload
@@ -128,7 +143,7 @@ jobs:
         run: npm publish --access public --tag "${{ steps.version.outputs.dist_tag }}"
 
       - name: Update npm dist-tag
-        if: ${{ steps.npm_gate.outputs.publish == 'true' }}
+        if: ${{ steps.npm_gate.outputs.publish == 'true' && steps.npm_version.outputs.tag_matches != 'true' && steps.npm_publish.outcome != 'success' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
