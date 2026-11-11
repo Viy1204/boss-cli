@@ -1,6 +1,6 @@
 import type { Frame, Page } from 'puppeteer-core';
 import { withBossSessionPage } from '../common/boss_session_page.js';
-import { type GreetCardDialogState } from '../common/boss_greet_card_dialog.js';
+import { type GreetCardDialogState, type SearchPoolSelection } from '../common/boss_greet_card_dialog.js';
 /**
  * 默认搜索城市。**不硬编码深圳**——这个包是公开发布的，别人不一定在深圳；
  * 不设这个变量时完全不碰城市控件，行为与加本功能之前一致。
@@ -185,6 +185,7 @@ export declare function openNormalSearchResumePreview(frame: Frame, target: stri
     name: string;
     index: number;
 }>;
+export declare function openNormalSearchResumeDetail(frame: Frame, target: string, index?: number): Promise<SearchPoolSelection>;
 /**
  * 搜索池卡片上「开聊」按钮的文案白名单（前缀匹配）。
  *

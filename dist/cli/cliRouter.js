@@ -5,7 +5,7 @@
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { closeRemoteBrowser, detachBrowserSession, probeRemoteHeadless, REMOTE_DEBUGGING_PORT, resolveHeadlessFromEnv, } from '../browser/index.js';
-import { implChatAction, implLogin, implListCandidates, implListUnreadCandidates, implOpenChatByIndex, implListPositions, implListPositionsWithOptions, implNormalSearch, runReload, parseFilterLabels, implOpenChat, implRecommend, implPreview, implRecommendGreet, implSetBaiduCredentials, implBossSearch, implSendMessage, } from '../toolset/index.js';
+import { implChatAction, implLogin, implListCandidates, implListUnreadCandidates, implOpenChatByIndex, implListPositions, implListPositionsWithOptions, implNormalSearch, runReload, runFavorite, parseFilterLabels, implOpenChat, implRecommend, implPreview, implRecommendGreet, implSetBaiduCredentials, implBossSearch, implSendMessage, } from '../toolset/index.js';
 import { printBossInteractiveBanner } from './banner.js';
 import { printPackageUpdateNoticeIfDue, printVersionInfo, runPackageUpdate, } from './version.js';
 import { acquireBusyLock, releaseBusyLock } from '../common/busy_lock.js';
@@ -184,7 +184,16 @@ function printHelp() {
       --index 使用最近一次列表输出的 1-based 序号；同名须用序号，同时提供姓名时校验同一目标
       列表快照有效期15分钟；缺失、刷新、换序或资料变化会拒绝，请重新运行对应列表命令
       默认保存 PNG 并输出路径；OCR 默认关闭，不支持 --job；旧深搜页分支暂不可用
-      注意：平台对在线简历每日可查看次数有限，请按需使用、谨慎查看
+      OCR 失败仍报错，并保留已保存 PNG 的绝对路径及失败原因
+  boss favorite <姓名> 或 boss favorite [姓名] --index <序号> [--remove]
+      根据当前页面从搜索、推荐或收藏列表的有效快照定位唯一候选人；不自动切页
+      默认设为已收藏，--remove 设为未收藏；状态已满足时不重复点击
+      搜索/推荐序号来自最近一次 search/recommend，收藏序号来自最近一次 favorite --list，不能混用
+      同名须用序号，同时提供姓名时校验同一目标；快照15分钟有效，身份/资料/顺序变化后须重读
+      详情平台ID与来源一致后才操作；未知状态或结果未确认时报错，取消收藏后旧收藏列表编号失效
+  boss favorite --list
+      进入互动页 /web/chat/interaction 并刷新「收藏牛人」标签，读取平台当前已加载收藏列表
+      --list 不能与姓名、--index 或 --remove 同用；未加载全量时明确说明，不以零条DOM冒充空列表
   boss greet <姓名> [--job <岗位关键字>]
       须当前已在「推荐」(/web/chat/recommend) 且列表已加载；不自动切换列表页；旧深搜页分支暂不可用
       对当前列表中的候选人点击“打招呼”
@@ -564,6 +573,48 @@ export async function executeCommand(argv) {
             jobHop: opts['job-hop']?.trim() || undefined,
             majors: parseFilterLabels(opts.major),
         });
+    }
+    if (cmd === 'favorite') {
+        const names = [];
+        let list = false;
+        let remove = false;
+        let candidateIndex;
+        for (let i = 0; i < tail.length; i++) {
+            const arg = tail[i];
+            if (arg === '--list') {
+                list = true;
+            }
+            else if (arg === '--remove') {
+                remove = true;
+            }
+            else if (arg === '--index' || arg.startsWith('--index=')) {
+                if (candidateIndex !== undefined)
+                    die('favorite 不支持重复 --index。');
+                const raw = arg === '--index' ? tail[++i] : arg.slice('--index='.length);
+                const value = Number(raw);
+                if (raw === undefined || !/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < 1) {
+                    die(`favorite --index 必须是从 1 开始的整数，当前值: ${raw ?? '缺失'}`);
+                }
+                candidateIndex = value;
+            }
+            else if (arg.startsWith('-')) {
+                die(`favorite 不支持参数: ${arg}`);
+            }
+            else {
+                names.push(arg);
+            }
+        }
+        const candidateTarget = names.join(' ').trim();
+        if (list) {
+            if (candidateTarget || candidateIndex !== undefined || remove) {
+                die('favorite --list 不能与姓名、--index 或 --remove 同时使用。');
+            }
+            return runFavorite({ kind: 'list' });
+        }
+        if (!candidateTarget && candidateIndex === undefined) {
+            die('用法: favorite [姓名] --index <序号> [--remove]；或 favorite --list');
+        }
+        return runFavorite({ kind: 'set', candidateTarget, candidateIndex, desired: remove ? 'unsaved' : 'saved' });
     }
     if (cmd === 'preview') {
         const { rest, opts, flags } = parseOpts(tail);

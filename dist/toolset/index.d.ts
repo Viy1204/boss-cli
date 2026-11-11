@@ -3,6 +3,7 @@ import { type NormalSearchOptions } from './normal-search.js';
 export { parseFilterLabels, normalizeFilterLabel, parseRangeArg, expTokenToIndex, degreeTokenToIndex, degreeSliderLabel, expSliderLabel, ageTokenToLabel, defaultSearchCityFromEnv, } from './normal-search.js';
 export type { NormalSearchOptions };
 export { runReload } from './reload.js';
+export { runFavorite, type FavoriteCommand } from './favorite.js';
 export type { ChatPageAction };
 export type { DeepSearchGeekItem } from './deep-search.js';
 export declare function implLogin(): Promise<string>;

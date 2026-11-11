@@ -110,15 +110,13 @@ export async function runPreview(options: PreviewOptions): Promise<string> {
         throw new Error(capture.detail ?? '在线简历 iframe 截图失败。');
       }
 
-      const disclaimer =
-        '说明：平台对在线简历的每日可查看次数有限，请按需使用、谨慎查看。';
       const head = [jobLine, `目标：${targetLabel}`, `简历预览截图：${absPath}`, ''];
       if (capture.detail) {
         head.push(`⚠️ ${capture.detail}`, '');
       }
 
       if (!isResumeOcrEnabled()) {
-        return [...head, disclaimer].join('\n');
+        return head.join('\n').trimEnd();
       }
       try {
         const ocr = await ocrResumePngToTextFile(absPath);
@@ -127,16 +125,14 @@ export async function runPreview(options: PreviewOptions): Promise<string> {
           '在线简历 OCR 正文：',
           '',
           ocr.text,
-          '',
-          disclaimer,
         ].join('\n');
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        throw new Error(`简历预览截图已保存，但 OCR 失败：${msg}`);
+        throw new Error(`简历预览截图已保存：${absPath}\n但 OCR 失败：${msg}`, { cause: e });
       }
     }));
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    throw new Error(`简历预览失败：${message}`);
+    throw new Error(`简历预览失败：${message}`, { cause: e });
   }
 }

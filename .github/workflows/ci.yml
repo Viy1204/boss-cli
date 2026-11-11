@@ -1,0 +1,103 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Setup Chrome 2.2.0
+        id: chrome
+        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4
+        with:
+          chrome-version: stable
+          install-dependencies: true
+      - name: Install dependencies
+        run: npm ci
+      - name: Prepare browser environment
+        env:
+          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+        run: |
+          case "$RUNNER_OS" in
+            Linux)
+              CHROME_PATH="$(realpath "$CHROME_PATH")"
+              printf 'abi <abi/4.0>,\ninclude <tunables/global>\nprofile boss-cli-ci-chrome "%s" flags=(unconfined) {\n  userns,\n}\n' "$CHROME_PATH" | sudo tee /etc/apparmor.d/boss-cli-ci-chrome > /dev/null
+              sudo apparmor_parser -r /etc/apparmor.d/boss-cli-ci-chrome
+              ;;
+            macOS)
+              bundle="${CHROME_PATH%/Contents/MacOS/*}"
+              destination="$RUNNER_TEMP/ChromeForTesting.app"
+              ditto "$bundle" "$destination"
+              CHROME_PATH="$destination/Contents/MacOS/${CHROME_PATH##*/}"
+              ;;
+            Windows) ;;
+            *) exit 1 ;;
+          esac
+          printf 'CHROME_PATH=%s\n' "$CHROME_PATH" >> "$GITHUB_ENV"
+      - name: Verify browser and run tests
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { accessSync } from 'node:fs';
+          import puppeteer from 'puppeteer-core';
+          accessSync(process.env.CHROME_PATH);
+          const browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH, headless: true, pipe: true, dumpio: true, protocolTimeout: 15_000 });
+          try {
+            const page = await browser.newPage();
+            await page.setContent('<title>CI renderer ready</title>');
+            assert.equal(await page.title(), 'CI renderer ready');
+            console.log(await browser.version());
+          } finally {
+            await browser.close();
+          }
+          JS
+          npm test
+      - name: Pack and install consumer
+        run: |
+          npm pack --json > pack-result.json
+          archive="$(node -p "require('./pack-result.json')[0].filename")"
+          npm install --prefix "$RUNNER_TEMP/boss-cli-consumer" "$PWD/$archive" --ignore-scripts --no-audit --no-fund
+      - name: Verify installed CLI
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { join } from 'node:path';
+          import { spawnSync } from 'node:child_process';
+          const cli = join(process.env.RUNNER_TEMP, 'boss-cli-consumer/node_modules/@viyzhu/boss-cli-fork/dist/cli/index.js');
+          for (const [args, code] of [[['help'], 0], [['favorite', '--index', '0'], 1], [['favorite', '--list', '--remove'], 1]]) {
+            const result = spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', timeout: 15_000 });
+            if (result.error) throw result.error;
+            assert.equal(result.status, code, args.join(' '));
+            if (args[0] === 'help') assert.match(result.stdout + result.stderr, /boss favorite/);
+          }
+          JS
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: boss-cli-${{ matrix.os }}
+          path: '*.tgz'
+          if-no-files-found: error

@@ -1595,6 +1595,15 @@ export async function openNormalSearchResumePreview(
   target: string,
   index?: number,
 ): Promise<{ name: string; index: number }> {
+  const selection = await openNormalSearchResumeDetail(frame, target, index);
+  return { name: selection.name, index: selection.index };
+}
+
+export async function openNormalSearchResumeDetail(
+  frame: Frame,
+  target: string,
+  index?: number,
+): Promise<SearchPoolSelection> {
   const selection = await selectSearchPoolCandidate(frame, { target, index, match: 'name' });
   await frame.evaluate(`(() => {
     ${validatedSearchSelectionScript(selection)}
@@ -1606,7 +1615,7 @@ export async function openNormalSearchResumePreview(
     nameLabel.click();
   })()`);
   await sleepRandom(RESUME_PREVIEW_OPEN_GAP_MS.min, RESUME_PREVIEW_OPEN_GAP_MS.max);
-  return { name: selection.name, index: selection.index };
+  return selection;
 }
 
 /**
