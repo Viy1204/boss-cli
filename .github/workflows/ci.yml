@@ -17,6 +17,7 @@ jobs:
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -37,17 +38,41 @@ jobs:
           install-dependencies: true
       - name: Install dependencies
         run: npm ci
-      - name: Verify browser and run tests
+      - name: Prepare browser environment
         env:
           CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
         run: |
+          case "$RUNNER_OS" in
+            Linux)
+              test -u /opt/google/chrome/chrome-sandbox
+              printf 'CHROME_DEVEL_SANDBOX=%s\n' '/opt/google/chrome/chrome-sandbox' >> "$GITHUB_ENV"
+              ;;
+            macOS)
+              bundle="${CHROME_PATH%/Contents/MacOS/*}"
+              destination="$RUNNER_TEMP/ChromeForTesting.app"
+              ditto "$bundle" "$destination"
+              CHROME_PATH="$destination/Contents/MacOS/${CHROME_PATH##*/}"
+              ;;
+            Windows) ;;
+            *) exit 1 ;;
+          esac
+          printf 'CHROME_PATH=%s\n' "$CHROME_PATH" >> "$GITHUB_ENV"
+      - name: Verify browser and run tests
+        run: |
           node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
           import { accessSync } from 'node:fs';
           import puppeteer from 'puppeteer-core';
           accessSync(process.env.CHROME_PATH);
-          const browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH, headless: true, pipe: true, dumpio: true });
-          console.log(await browser.version());
-          await browser.close();
+          const browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH, headless: true, pipe: true, dumpio: true, protocolTimeout: 15_000 });
+          try {
+            const page = await browser.newPage();
+            await page.setContent('<title>CI renderer ready</title>');
+            assert.equal(await page.title(), 'CI renderer ready');
+            console.log(await browser.version());
+          } finally {
+            await browser.close();
+          }
           JS
           npm test
       - name: Pack and install consumer
