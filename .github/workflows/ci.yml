@@ -44,8 +44,9 @@ jobs:
         run: |
           case "$RUNNER_OS" in
             Linux)
-              test -u /opt/google/chrome/chrome-sandbox
-              printf 'CHROME_DEVEL_SANDBOX=%s\n' '/opt/google/chrome/chrome-sandbox' >> "$GITHUB_ENV"
+              CHROME_PATH="$(realpath "$CHROME_PATH")"
+              printf 'abi <abi/4.0>,\ninclude <tunables/global>\nprofile boss-cli-ci-chrome "%s" flags=(unconfined) {\n  userns,\n}\n' "$CHROME_PATH" | sudo tee /etc/apparmor.d/boss-cli-ci-chrome > /dev/null
+              sudo apparmor_parser -r /etc/apparmor.d/boss-cli-ci-chrome
               ;;
             macOS)
               bundle="${CHROME_PATH%/Contents/MacOS/*}"
