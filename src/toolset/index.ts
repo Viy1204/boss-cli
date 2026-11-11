@@ -24,6 +24,7 @@ export {
 } from './normal-search.js';
 export type { NormalSearchOptions };
 export { runReload } from './reload.js';
+export { runFavorite, type FavoriteCommand } from './favorite.js';
 import { runRecommend } from './recommend.js';
 import { runPreview } from './preview.js';
 import { runRecommendGreet } from './greet.js';

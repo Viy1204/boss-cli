@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { TimeoutError } from 'puppeteer-core';
 import type { Frame, Page } from 'puppeteer-core';
 import {
@@ -31,12 +32,84 @@ const sessionGreetProducedGeekIds = new Set<string>();
 const RECOMMEND_CARD_ROOT_SELECTOR = '.candidate-card-wrap:not(.anonymous-geek-guide-card)';
 const RECOMMEND_SNAPSHOT_MAX_AGE_MS = 15 * 60 * 1000;
 
-const RECOMMEND_CANDIDATE_READER_SCRIPT = `
+export type CandidateListSource = 'recommend' | 'favorites';
+export type CandidateListSelection = {
+  source: CandidateListSource;
+  snapshotId: string;
+  index: number;
+  name: string;
+  geekId: string;
+};
+
+const CANDIDATE_LISTS = {
+  recommend: {
+    label: '推荐', command: 'recommend', path: '/web/chat/recommend',
+    frame: 'recommendFrame', framePath: '/web/frame/recommend', snapshot: '__bossCliRecommendSnapshot',
+    root: RECOMMEND_CARD_ROOT_SELECTOR,
+  },
+  favorites: {
+    label: '收藏', command: 'favorite --list', path: '/web/chat/interaction',
+    frame: 'interactionFrame', framePath: '/web/frame/recommend/interaction', snapshot: '__bossCliFavoriteSnapshot',
+    root: '.candidate-card-wrap',
+  },
+} as const;
+
+const CANDIDATE_COMPONENT_SCRIPT = `
+  const candidateComponent = card => {
+    const root = card.__vue__;
+    const owners = [root, ...(root?.$children ?? [])].filter(component =>
+      component?.$options?.name === "RecommendCandidateCard" && component.$el === card);
+    if (owners.length > 1) throw new Error("候选卡片对应多个身份组件；停止操作。");
+    return owners[0] ?? null;
+  };
+  const candidateId = card => {
+    const id = candidateComponent(card)?.$props?.geekInfo?.encryptGeekId;
+    return typeof id === "string" ? id.trim() : "";
+  };
+`;
+
+export const FAVORITE_LIST_STATE_SCRIPT = `(() => {
+  ${CANDIDATE_COMPONENT_SCRIPT}
+  const topWindow = window.top;
+  if (topWindow.location.origin !== "https://www.zhipin.com" || topWindow.location.pathname.replace(/\\/+$/, "") !== "/web/chat/interaction") throw new Error("主页面已离开收藏入口；停止读取。");
+  const visible = el => {
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    for (let node = el; node; node = node.parentElement) {
+      const style = topWindow.getComputedStyle(node);
+      if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+    }
+    return true;
+  };
+  const frames = Array.from(topWindow.document.querySelectorAll('iframe[name="interactionFrame"]')).filter(visible);
+  if (frames.length !== 1 || frames[0].contentDocument !== document) throw new Error("当前收藏 frame 绑定已变化；停止读取。");
+  if (!document.querySelector('li.tab-item[title="收藏牛人"].curr')) return { ready: false };
+  const view = document.querySelector(".list-wrap.card-list-wrap")?.__vue__?.$props;
+  const pageList = document.querySelector(".card-list")?.__vue__?.$props?.pageList;
+  if (!view || !Array.isArray(pageList)) return { ready: false };
+  if (view.error !== false) throw new Error("平台收藏列表加载出错；未读取成功。");
+  if (view.loading !== false) return { ready: false };
+  if (typeof view.finished !== "boolean") throw new Error("无法识别收藏列表加载状态。");
+  const cards = Array.from(document.querySelectorAll(".candidate-card-wrap"));
+  const components = cards.map(candidateComponent);
+  if (components.some(component => !component) || cards.some(card => !candidateId(card))) return { ready: false };
+  if (components.some(component => component.$props.status !== 9)) throw new Error("当前列表并非收藏牛人；停止操作。");
+  if (cards.length !== pageList.length) return { ready: false };
+  if (cards.length === 0 && !view.finished) return { ready: false };
+  return {
+    ready: true, finished: view.finished,
+    signature: JSON.stringify([view.finished, cards.map(card => [candidateId(card), card.textContent])]),
+  };
+})()`;
+
+function candidateReaderScript(source: CandidateListSource): string {
+  const list = CANDIDATE_LISTS[source];
+  return `
+  ${CANDIDATE_COMPONENT_SCRIPT}
   const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
   const readIdentity = item => {
-    const inner = item.querySelector(".card-inner");
-    const geekId = norm(inner?.getAttribute("data-geekid"));
-    if (!geekId) throw new Error("推荐候选人缺少可核对平台标识 data-geekid；停止操作。");
+    const geekId = candidateId(item);
+    if (!geekId) throw new Error(${JSON.stringify(`${list.label}候选人缺少可核对平台标识；停止操作。`)});
     const timeline = selector => Array.from(item.querySelectorAll(selector)).map(row => {
       const time = Array.from(row.querySelectorAll(".join-text-wrap.time span")).map(el => norm(el.textContent)).filter(Boolean).join("-");
       const content = Array.from(row.querySelectorAll(".join-text-wrap.content span")).map(el => norm(el.textContent)).filter(Boolean).join(" · ");
@@ -59,19 +132,67 @@ const RECOMMEND_CANDIDATE_READER_SCRIPT = `
     };
   };
 `;
+}
 
-const VALIDATE_RECOMMEND_SNAPSHOT_SCRIPT = `
-  const snapshot = window.__bossCliRecommendSnapshot;
-  if (!snapshot) throw new Error("缺少推荐列表快照；请先执行 boss recommend。");
-  if (Date.now() - snapshot.createdAt > ${RECOMMEND_SNAPSHOT_MAX_AGE_MS}) throw new Error("推荐列表快照已超过 15 分钟；请重新执行 boss recommend。");
-  const currentJob = norm(document.querySelector(".job-selecter-wrap .ui-dropmenu-label")?.textContent);
-  if (currentJob !== snapshot.job) throw new Error("推荐岗位已变化；请重新执行 boss recommend。");
-  const cards = Array.from(document.querySelectorAll(${JSON.stringify(RECOMMEND_CARD_ROOT_SELECTOR)}));
-  if (cards.length !== snapshot.cards.length || cards.some((card, index) =>
-    card !== snapshot.cards[index] || JSON.stringify(readIdentity(card)) !== snapshot.fingerprints[index])) {
-    throw new Error("推荐列表与快照身份、资料或顺序不一致；请重新执行 boss recommend。");
-  }
-`;
+function candidateSnapshotScript(source: CandidateListSource, validateList = true): string {
+  const list = CANDIDATE_LISTS[source];
+  return `
+    ${candidateReaderScript(source)}
+    const snapshot = window[${JSON.stringify(list.snapshot)}];
+    if (!snapshot || typeof snapshot.id !== "string" || !snapshot.id) throw new Error(${JSON.stringify(`缺少${list.label}列表快照或快照标识；请先执行 boss ${list.command}。`)});
+    if (Date.now() - snapshot.createdAt > ${RECOMMEND_SNAPSHOT_MAX_AGE_MS}) throw new Error(${JSON.stringify(`${list.label}列表快照已超过 15 分钟；请重新执行 boss ${list.command}。`)});
+    const currentJob = norm(document.querySelector(".job-selecter-wrap .ui-dropmenu-label")?.textContent);
+    if (currentJob !== snapshot.job) throw new Error(${JSON.stringify(`${list.label}岗位已变化；请重新执行 boss ${list.command}。`)});
+    ${source === 'favorites' ? `
+      if (!document.querySelector('li.tab-item[title="收藏牛人"].curr')) throw new Error("当前已离开收藏牛人标签；请重新执行 boss favorite --list。");
+      ${validateList ? `
+        const state = ${FAVORITE_LIST_STATE_SCRIPT};
+        if (!state.ready) throw new Error("收藏列表尚未就绪；停止操作。");
+      ` : ''}
+    ` : ''}
+    const cards = Array.from(document.querySelectorAll(${JSON.stringify(list.root)}));
+    ${validateList ? `
+      if (cards.length !== snapshot.cards.length || cards.some((card, index) =>
+        card !== snapshot.cards[index] || JSON.stringify(readIdentity(card)) !== snapshot.fingerprints[index])) {
+        throw new Error(${JSON.stringify(`${list.label}列表与快照身份、资料或顺序不一致；请重新执行 boss ${list.command}。`)});
+      }
+    ` : ''}
+  `;
+}
+
+export function validatedCandidateListSelectionScript(selection: CandidateListSelection, validateList = true): string {
+  const list = CANDIDATE_LISTS[selection.source];
+  return `
+    const topWindow = window.top;
+    if (topWindow.location.origin !== "https://www.zhipin.com" || topWindow.location.pathname.replace(/\\/+$/, "") !== ${JSON.stringify(list.path)}) {
+      throw new Error("主页面已离开原候选列表；停止操作。");
+    }
+    const frames = Array.from(topWindow.document.querySelectorAll(${JSON.stringify(`iframe[name="${list.frame}"]`)})).filter(el => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      for (let node = el; node; node = node.parentElement) {
+        const style = topWindow.getComputedStyle(node);
+        if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+      }
+      return true;
+    });
+    if (frames.length !== 1) throw new Error("当前可见候选列表 frame 绑定已变化；停止操作。");
+    const listDocument = frames[0].contentDocument;
+    if (!listDocument || (window !== topWindow && listDocument !== document)) throw new Error("候选列表 frame 与原目标失去绑定；停止操作。");
+    (() => {
+      const document = listDocument;
+      const window = listDocument.defaultView;
+      ${candidateSnapshotScript(selection.source, validateList)}
+      if (snapshot.id !== ${JSON.stringify(selection.snapshotId)}) throw new Error("候选列表快照已更换；停止操作。");
+      ${validateList ? `
+        const picked = snapshot.cards[${selection.index - 1}];
+        const identity = picked && readIdentity(picked);
+        if (!identity || identity.name !== ${JSON.stringify(selection.name)} || identity.geekId !== ${JSON.stringify(selection.geekId)}) throw new Error("候选人身份已变化；停止操作。");
+      ` : ''}
+    })();
+    const expectedId = ${JSON.stringify(selection.geekId)};
+  `;
+}
 
 export function isBossChatRecommendUrl(url: string): boolean {
   try {
@@ -86,30 +207,38 @@ export function isBossChatRecommendUrl(url: string): boolean {
   }
 }
 
-async function getRecommendFrame(page: Page): Promise<Frame> {
+export async function getCandidateListFrame(page: Page, source: CandidateListSource): Promise<Frame> {
+  const list = CANDIDATE_LISTS[source];
   const timeoutMs = 18_000;
-  const iframe = await page.waitForSelector('iframe[name="recommendFrame"]', {
+  const iframe = await page.waitForSelector(`iframe[name="${list.frame}"]`, {
     timeout: timeoutMs,
   });
   if (!iframe) {
-    throw new Error('未找到推荐 iframe（iframe[name="recommendFrame"]）。');
+    throw new Error(`未找到${list.label} iframe（iframe[name="${list.frame}"]）。`);
   }
 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const frame = await iframe.contentFrame();
-    if (frame && frame.url().includes('/web/frame/recommend')) {
-      return frame;
+    const frameUrl = frame?.url();
+    if (frame && frameUrl) {
+      let currentUrl: URL;
+      try {
+        currentUrl = new URL(frameUrl);
+      } catch (error) {
+        throw new Error(`${list.label} iframe 的 frame URL 无效：${frameUrl}；无法确认 ${list.framePath}。`, { cause: error });
+      }
+      if (currentUrl.pathname.replace(/\/+$/, '') === list.framePath) return frame;
     }
     await sleepRandom(120, 220);
   }
 
   const iframeSrc = (await page.evaluate(
-    `(() => document.querySelector('iframe[name="recommendFrame"]')?.getAttribute("src") ?? "")()`,
+    `(() => document.querySelector(${JSON.stringify(`iframe[name="${list.frame}"]`)})?.getAttribute("src") ?? "")()`,
   )) as string;
   const frameUrls = page.frames().map((f) => f.url()).join(' | ');
   throw new Error(
-    `已检测到推荐 iframe，但无法获取其页面上下文。iframe src：${iframeSrc || 'unknown'}；frames：${frameUrls || 'empty'}`,
+    `已检测到${list.label} iframe，但无法获取其页面上下文。iframe src：${iframeSrc || 'unknown'}；frames：${frameUrls || 'empty'}`,
   );
 }
 
@@ -249,7 +378,7 @@ export async function ensureInRecommendPage(page: Page): Promise<Frame> {
       matches: isBossChatRecommendUrl,
     });
     stage = '获取推荐 iframe';
-    const frame = await getRecommendFrame(page);
+    const frame = await getCandidateListFrame(page, 'recommend');
     stage = '推荐列表就绪';
     await ensureRecommendFrameReady(frame);
     return frame;
@@ -269,7 +398,7 @@ export async function assertRecommendPageReady(
   if (!isBossChatRecommendUrl(page.url())) {
     throw new Error(`当前不在推荐列表页（/web/chat/recommend），无法${actionName}。`);
   }
-  const frame = await getRecommendFrame(page);
+  const frame = await getCandidateListFrame(page, 'recommend');
   await ensureRecommendFrameReady(frame);
   return frame;
 }
@@ -278,14 +407,34 @@ export async function assertRecommendPageReadyForPreview(page: Page): Promise<Fr
   return assertRecommendPageReady(page, '预览候选人');
 }
 
-export async function readRecommendList(frame: Frame): Promise<RecommendCandidate[]> {
-  return (await frame.evaluate(`(() => {
-    delete window.__bossCliRecommendSnapshot;
-    ${RECOMMEND_CANDIDATE_READER_SCRIPT}
-    const cards = Array.from(document.querySelectorAll(${JSON.stringify(RECOMMEND_CARD_ROOT_SELECTOR)}));
+export async function readRecommendList(frame: Frame, source: CandidateListSource = 'recommend'): Promise<RecommendCandidate[]> {
+  const list = CANDIDATE_LISTS[source];
+  return (await frame.evaluate(`(async () => {
+    delete window[${JSON.stringify(list.snapshot)}];
+    ${candidateReaderScript(source)}
+    let cards = Array.from(document.querySelectorAll(${JSON.stringify(list.root)}));
+    ${source === 'recommend' ? `
+      const deadline = Date.now() + 18_000;
+      while (true) {
+        const view = document.querySelector(".list-wrap.card-list-wrap")?.__vue__?.$props;
+        if (view?.error === true) throw new Error("推荐列表加载出错；未创建快照。");
+        const missingId = cards.map(candidateId).some(id => !id);
+        const emptyPending = cards.length === 0 && view?.finished !== true;
+        if (view?.loading !== true && !emptyPending && !missingId) break;
+        if (Date.now() >= deadline) throw new Error("推荐列表数据或候选人平台标识未在预期时间内就绪；未创建快照。");
+        await new Promise(resolve => setTimeout(resolve, 100));
+        cards = Array.from(document.querySelectorAll(${JSON.stringify(list.root)}));
+      }
+    ` : ''}
     const identities = cards.map(readIdentity);
-    if (identities.some(item => !item.name)) throw new Error("推荐候选人缺少姓名；无法创建推荐列表快照。");
-    if (new Set(identities.map(item => item.geekId)).size !== identities.length) throw new Error("推荐候选人平台标识重复；无法创建推荐列表快照。");
+    if (identities.some(item => !item.name)) throw new Error(${JSON.stringify(`${list.label}候选人缺少姓名；无法创建列表快照。`)});
+    if (new Set(identities.map(item => item.geekId)).size !== identities.length) throw new Error(${JSON.stringify(`${list.label}候选人平台标识重复；无法创建列表快照。`)});
+    ${source === 'favorites' ? `
+      const state = ${FAVORITE_LIST_STATE_SCRIPT};
+      const settled = window.__bossCliFavoriteRead;
+      if (!state.ready || !settled || settled.signature !== state.signature || Date.now() - settled.since < 500) throw new Error("收藏列表尚未稳定；未创建快照。");
+      delete window.__bossCliFavoriteRead;
+    ` : ''}
     const candidates = cards.map((item, index) => {
       const inner = item.querySelector(".card-inner");
       const greetBtn = item.querySelector(".button-chat-wrap .btn.btn-greet");
@@ -303,8 +452,8 @@ export async function readRecommendList(frame: Frame): Promise<RecommendCandidat
         hasViewed: item.classList.contains("has-viewed") || inner.classList.contains("has-viewed"),
       };
     });
-    window.__bossCliRecommendSnapshot = {
-      createdAt: Date.now(), cards,
+    window[${JSON.stringify(list.snapshot)}] = {
+      id: ${JSON.stringify(randomUUID())}, createdAt: Date.now(), cards,
       job: norm(document.querySelector(".job-selecter-wrap .ui-dropmenu-label")?.textContent),
       fingerprints: identities.map(item => JSON.stringify(item)),
     };
@@ -453,32 +602,45 @@ export async function openRecommendResumePreview(
   target: string,
   index?: number,
 ): Promise<{ name: string; index: number }> {
+  const selected = await openCandidateListResumeDetail(frame, target, index);
+  return { name: selected.name, index: selected.index };
+}
+
+export async function openCandidateListResumeDetail(
+  frame: Frame,
+  target: string,
+  index?: number,
+  source: CandidateListSource = 'recommend',
+): Promise<CandidateListSelection> {
+  const list = CANDIDATE_LISTS[source];
   const selected = (await frame.evaluate(`(() => {
-    ${RECOMMEND_CANDIDATE_READER_SCRIPT}
-    ${VALIDATE_RECOMMEND_SNAPSHOT_SCRIPT}
+    ${candidateSnapshotScript(source)}
     const raw = ${JSON.stringify(target.trim())};
     const matches = card => raw && readIdentity(card).name.includes(raw);
     let index = ${JSON.stringify(index ?? null)};
     if (index !== null) {
-      if (!Number.isSafeInteger(index) || index < 1 || index > cards.length) throw new Error("推荐快照中没有此序号。");
+      if (!Number.isSafeInteger(index) || index < 1 || index > cards.length) throw new Error(${JSON.stringify(`${list.label}快照中没有此序号。`)});
       if (raw && !matches(cards[index - 1])) throw new Error("--index 与候选人姓名不匹配；未点击候选人。");
     } else {
       const hits = cards.map((card, i) => matches(card) ? i + 1 : null).filter(i => i !== null);
-      if (hits.length !== 1) throw new Error("推荐列表姓名没有唯一匹配；请核对后用 --index 指定。");
+      if (hits.length !== 1) throw new Error(${JSON.stringify(`${list.label}列表姓名没有唯一匹配；请核对后用 --index 指定。`)});
       index = hits[0];
     }
-    const targetCard = cards[index - 1];
-    const name = readIdentity(targetCard).name;
+    const identity = readIdentity(cards[index - 1]);
+    return { source: ${JSON.stringify(source)}, snapshotId: snapshot.id, name: identity.name, geekId: identity.geekId, index };
+  })()`)) as CandidateListSelection;
+  await frame.evaluate(`(() => {
+    ${validatedCandidateListSelectionScript(selected)}
+    const targetCard = window[${JSON.stringify(list.snapshot)}].cards[${selected.index - 1}];
     const inner = targetCard.querySelector(".card-inner");
-    if (!(inner instanceof HTMLElement)) throw new Error("推荐候选人缺少简历入口 .card-inner；未点击。");
+    if (!(inner instanceof HTMLElement)) throw new Error("候选人缺少简历入口 .card-inner；未点击。");
     const style = window.getComputedStyle(inner);
-    if (inner.classList.contains("disabled") || style.pointerEvents === "none" || Number(style.opacity) < 0.3) throw new Error("推荐候选人简历入口不可用；未点击。");
+    if (inner.classList.contains("disabled") || style.pointerEvents === "none" || Number(style.opacity) < 0.3) throw new Error("候选人简历入口不可用；未点击。");
     inner.scrollIntoView({ block: "center", inline: "nearest" });
-    (() => { ${VALIDATE_RECOMMEND_SNAPSHOT_SCRIPT} })();
-    if (targetCard.querySelector(".card-inner") !== inner) throw new Error("推荐简历入口已变化；未点击。");
+    (() => { ${validatedCandidateListSelectionScript(selected)} })();
+    if (targetCard.querySelector(".card-inner") !== inner) throw new Error("候选人简历入口已变化；未点击。");
     inner.click();
-    return { name, index };
-  })()`)) as { name: string; index: number };
+  })()`);
   await sleepRandom(RESUME_PREVIEW_OPEN_GAP_MS.min, RESUME_PREVIEW_OPEN_GAP_MS.max);
   return selected;
 }

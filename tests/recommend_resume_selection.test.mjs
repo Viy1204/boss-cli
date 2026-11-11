@@ -18,6 +18,7 @@ async function fixture() {
     getAttribute() { return null; }
     matches() { return false; }
     scrollIntoView() {}
+    getBoundingClientRect() { return { width: 300, height: 300 }; }
     click() {}
   }
   const makeTimeline = (dates, details) => {
@@ -36,8 +37,7 @@ async function fixture() {
     card.work = makeTimeline(['2020', '至今'], ['A公司', '工程师']);
     card.education = makeTimeline(['2016', '2020'], ['A大学', '计算机', '本科']);
     card.inner = new Element();
-    card.inner.id = id;
-    card.inner.getAttribute = key => key === 'data-geekid' ? card.inner.id : null;
+    card.__vue__ = { $el: card, $options: { name: 'RecommendCandidateCard' }, $children: [], $props: { geekInfo: { encryptGeekId: id } } };
     card.inner.click = () => { state.clicks.push(id); card.className = 'has-viewed'; };
     card.querySelector = selector => {
       if (selector === '.card-inner') return card.inner;
@@ -66,11 +66,24 @@ async function fixture() {
     },
   };
   const window = { getComputedStyle: el => el.style, location: new URL('https://www.zhipin.com/web/frame/recommend/') };
-  const context = vm.createContext({ document, window, HTMLElement: Element, Date: { now: () => state.now } });
+  document.defaultView = window;
+  const iframe = new Element();
+  iframe.contentDocument = document;
+  window.top = {
+    location: new URL('https://www.zhipin.com/web/chat/recommend'),
+    getComputedStyle: el => el.style,
+    document: { querySelectorAll: selector => selector === 'iframe[name="recommendFrame"]' ? [iframe] : [] },
+  };
+  const context = vm.createContext({
+    document, window, HTMLElement: Element, Date: { now: () => state.now },
+    setTimeout: (callback, delay) => { state.now += delay; callback(); return 1; },
+  });
   const frame = { evaluate: async script => vm.runInContext(script, context) };
   const source = await readFile(new URL('../src/toolset/recommend.ts', import.meta.url), 'utf8');
   const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } });
+  let snapshotSequence = 0;
   const imports = {
+    'node:crypto': { randomUUID: () => 'recommend-snapshot-' + ++snapshotSequence },
     'puppeteer-core': { TimeoutError: Error },
     '../browser/index.js': { sleepRandom: async () => {}, RESUME_PREVIEW_OPEN_GAP_MS: { min: 0, max: 0 } },
     '../common/boss_session_page.js': {},
@@ -168,7 +181,7 @@ test('推荐顺序变化或相同资料的DOM重建后拒绝预览', async () =>
 
 test('推荐平台ID、工作教育日期、院校或岗位变化后拒绝预览', async () => {
   for (const change of [
-    f => { f.state.cards[1].inner.id = 'other-candidate'; },
+    f => { f.state.cards[1].__vue__.$props.geekInfo.encryptGeekId = 'other-candidate'; },
     f => { f.state.cards[1].work.dates[0].textContent = '2021'; },
     f => { f.state.cards[1].work.details[0].textContent = 'B公司'; },
     f => { f.state.cards[1].education.dates[0].textContent = '2015'; },
@@ -186,7 +199,7 @@ test('推荐平台ID、工作教育日期、院校或岗位变化后拒绝预览
 test('推荐卡片滚入视口时被替换，点击前仍拒绝失配身份', async () => {
   const f = await fixture();
   await read(f);
-  f.state.cards[1].inner.scrollIntoView = () => { f.state.cards[1].inner.id = 'other-candidate'; };
+  f.state.cards[1].inner.scrollIntoView = () => { f.state.cards[1].__vue__.$props.geekInfo.encryptGeekId = 'other-candidate'; };
   await assert.rejects(preview(f, '', 2), /快照|资料|身份/);
   assert.deepEqual(f.state.clicks, []);
 });
@@ -200,9 +213,21 @@ test('推荐预览产生has-viewed和样式变化不使快照失效', async () =
   assert.deepEqual(f.state.clicks, ['candidate-2', 'candidate-3']);
 });
 
+test('未就绪卡片不会掩盖后续卡片的多拥有者错误', async () => {
+  const f = await fixture();
+  const first = f.state.cards[0];
+  first.__vue__ = { $el: first, $options: {}, $children: [], $props: {} };
+  const second = f.state.cards[1];
+  const owner = second.__vue__;
+  second.__vue__ = { $el: second, $options: {}, $children: [owner, { ...owner }], $props: {} };
+  await assert.rejects(read(f), /多个身份组件/);
+  await assert.rejects(preview(f, '', 2), /快照/);
+  assert.deepEqual(f.state.clicks, []);
+});
+
 test('推荐平台ID缺失时拒绝创建可用快照，不改用姓名', async () => {
   const f = await fixture();
-  f.state.cards[0].inner.id = '';
+  f.state.cards[0].__vue__.$props.geekInfo.encryptGeekId = '';
   await assert.rejects(read(f), /标识|ID|data-geekid/);
   await assert.rejects(preview(f, '', 1), /快照/);
   assert.deepEqual(f.state.clicks, []);
@@ -216,12 +241,20 @@ test('推荐iframe刷新丢失快照后拒绝沿用序号', async () => {
   assert.deepEqual(f.state.clicks, []);
 });
 
+test('升级前缺少快照标识的暖页面必须重新读取推荐列表', async () => {
+  const f = await fixture();
+  await read(f);
+  delete f.window.__bossCliRecommendSnapshot.id;
+  await assert.rejects(preview(f, '', 2), /快照/);
+  assert.deepEqual(f.state.clicks, []);
+});
+
 test('重新读取推荐列表失败后不得复用先前快照', async () => {
   const f = await fixture();
   await read(f);
-  f.state.cards[1].inner.id = 'candidate-1';
+  f.state.cards[1].__vue__.$props.geekInfo.encryptGeekId = 'candidate-1';
   await assert.rejects(read(f), /标识重复|ID重复/);
-  f.state.cards[1].inner.id = 'candidate-2';
+  f.state.cards[1].__vue__.$props.geekInfo.encryptGeekId = 'candidate-2';
   await assert.rejects(preview(f, '', 2), /快照/);
   assert.deepEqual(f.state.clicks, []);
 });

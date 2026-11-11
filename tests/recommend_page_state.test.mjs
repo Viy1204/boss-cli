@@ -90,8 +90,12 @@ const FIXTURE_SCRIPT = `(() => {
 })()`;
 
 function boundFrame(frame) {
+  let initialUrl = true;
   return {
-    url: () => 'data:text/html,/web/frame/recommend',
+    url: () => {
+      if (initialUrl) { initialUrl = false; return ''; }
+      return 'https://www.zhipin.com/web/frame/recommend/';
+    },
     evaluate: script => frame.evaluate(script),
     waitForFunction: async (script, options) => {
       await frame.evaluate('window.__fixtureWaits.push(' + JSON.stringify(options.timeout) + ')');
@@ -124,7 +128,7 @@ test('推荐异步DOM在rAF停转时仍应完成初始化和选岗', { skip: !ex
       url: () => 'https://www.zhipin.com/web/chat/recommend',
       waitForSelector: async () => ({ contentFrame: async () => bound }),
     };
-    await t.test('异步挂载列表后初始化就绪', async () => {
+    await t.test('初始frame URL为空，异步挂载列表后初始化就绪', async () => {
       assert.equal(await ensureInRecommendPage(shell), bound);
       assert.equal(await frame.evaluate('!!document.querySelector(".card-list")'), true);
     });

@@ -10,7 +10,7 @@ async function loadSource(file, imports) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   });
   const exports = {};
-  vm.runInNewContext(outputText, { exports, URL, process: { env: {} }, require: id => {
+  vm.runInNewContext(outputText, { exports, URL, Error, process: { env: {} }, require: id => {
     assert.ok(Object.hasOwn(imports, id), '未隔离的依赖：' + id);
     return imports[id];
   } }, { filename: file });
@@ -134,7 +134,7 @@ test('搜索预览滚动期间身份变化后零点击', async () => {
   assert.equal(f.state.contacts, 0);
 });
 
-async function previewFixture(path) {
+async function previewFixture(path, { capture = { ok: true }, ocrEnabled = false, ocrError } = {}) {
   const state = { opens: [], deepNavigations: 0, captures: [] };
   const page = { url: () => 'https://www.zhipin.com' + path };
   const api = await loadSource('../src/toolset/preview.ts', {
@@ -144,11 +144,18 @@ async function previewFixture(path) {
     '../common/boss_paywall_popup.js': { waitForCResumeIframeOrPaywall: async () => 'iframe' },
     '../common/c_resume_capture.js': {
       waitForVisibleCResumeIframeReady: async () => true,
-      captureCResumeIframeToFile: async (_page, _viewport, file) => { state.captures.push(file); return { ok: true }; },
+      captureCResumeIframeToFile: async (_page, _viewport, file) => { state.captures.push(file); return capture; },
+      closeCResumePanel: async () => true,
       safeResumeScreenshotFileBase: value => value,
     },
     '../config.js': { ensureAppDataLayout() {}, RESUME_SCREENSHOTS_DIR: '/screenshots' },
-    '../ocr/index.js': { isResumeOcrEnabled: () => false },
+    '../ocr/index.js': {
+      isResumeOcrEnabled: () => ocrEnabled,
+      ocrResumePngToTextFile: async () => {
+        if (ocrError) throw ocrError;
+        return { text: '教育经历：示例大学' };
+      },
+    },
     './deep-search.js': {
       isBossChatAiFormUrl: url => url.endsWith('/aiform'),
       ensureInDeepSearchPage: async () => { state.deepNavigations++; },
@@ -180,6 +187,35 @@ test('搜索及推荐纯索引预览输出实际姓名与序号', async () => {
     assert.equal(f.state.captures.length, 1);
     assert.match(f.state.captures[0], /2/);
   }
+});
+
+for (const ocrEnabled of [false, true]) {
+  test('preview 成功保留PNG路径，不附带固定额度提示，OCR=' + ocrEnabled, async () => {
+    const f = await previewFixture('/web/chat/search', { ocrEnabled, capture: { ok: true, detail: '截图正文请核对' } });
+    const result = await f.api.runPreview({ candidateTarget: '', candidateIndex: 2 });
+    assert.ok(result.includes(f.state.captures[0]));
+    assert.match(result, /简历预览截图：\/screenshots\/.*\.png/);
+    assert.match(result, /截图正文请核对/);
+    assert.doesNotMatch(result, /每日.*(?:次数|额度)|谨慎查看/);
+    if (ocrEnabled) assert.match(result, /教育经历：示例大学/);
+  });
+}
+
+test('preview OCR失败仍失败，并保留已保存PNG的绝对路径与真实原因', async () => {
+  const failure = new Error('OCR 认证失败：invalid API key');
+  const f = await previewFixture('/web/chat/recommend', { ocrEnabled: true, ocrError: failure });
+  await assert.rejects(f.api.runPreview({ candidateTarget: '', candidateIndex: 2 }), error => {
+    assert.match(error.message, /截图已保存：\/screenshots\/.*\.png/);
+    assert.ok(error.message.includes(f.state.captures[0]));
+    assert.match(error.message, /OCR 认证失败：invalid API key/);
+    assert.equal(error.cause.cause, failure);
+    return true;
+  });
+});
+
+test('preview截图无效仍失败，不以PNG路径冒充成功', async () => {
+  const f = await previewFixture('/web/chat/search', { capture: { ok: false, detail: '在线简历截图为空壳' }, ocrEnabled: true });
+  await assert.rejects(f.api.runPreview({ candidateTarget: '', candidateIndex: 2 }), /截图为空壳/);
 });
 
 test('旧深搜索引预览在任何导航或点击前拒绝', async () => {

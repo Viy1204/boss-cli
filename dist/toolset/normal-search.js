@@ -1347,6 +1347,10 @@ async function closeMajorDialog(frame, confirm) {
     }
 }
 export async function openNormalSearchResumePreview(frame, target, index) {
+    const selection = await openNormalSearchResumeDetail(frame, target, index);
+    return { name: selection.name, index: selection.index };
+}
+export async function openNormalSearchResumeDetail(frame, target, index) {
     const selection = await selectSearchPoolCandidate(frame, { target, index, match: 'name' });
     await frame.evaluate(`(() => {
     ${validatedSearchSelectionScript(selection)}
@@ -1358,7 +1362,7 @@ export async function openNormalSearchResumePreview(frame, target, index) {
     nameLabel.click();
   })()`);
     await sleepRandom(RESUME_PREVIEW_OPEN_GAP_MS.min, RESUME_PREVIEW_OPEN_GAP_MS.max);
-    return { name: selection.name, index: selection.index };
+    return selection;
 }
 /**
  * 搜索池卡片上「开聊」按钮的文案白名单（前缀匹配）。

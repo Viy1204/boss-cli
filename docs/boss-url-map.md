@@ -13,6 +13,7 @@
 | `/web/chat/aiform` | 已下线的旧深度搜索 / Agent 搜索 | `boss deep-search`；`preview` / `greet` 的旧页分支 | **暂不可用**。实现仍导航到此路径并依赖旧表单、iframe 和候选列表；命令入口与旧参数保留，不代表新版已适配。旧页 `preview` / `greet` 分支也不代表可用能力。 |
 | `/web/chat/search/ai` | 新版深度搜索 | 暂无已适配命令 | CLI 尚未适配，`deep-search`、`preview`、`greet` 均不能据此使用新版深度搜索；需要时在网页端人工操作。 |
 | `/web/chat/search` | 常规搜索 | `boss search [关键词] [--job] [--city] [--degree|--degree-range] [--school] [--exp|--exp-range] [--age|--age-range] [--status] [--job-hop] [--major]`、`boss preview <姓名>`、`boss greet [关键词] --index <序号> [--job] [--dry-run]` | `search` 会先检查当前位置，不在该页时只点击已观测的侧栏 `.menu-geeksearch a[ka="menu-geek-search"]`，不使用 goto 重载或导航回退；带关键词时填入搜索框并回车搜索；**有关键词时先检查并清除旧筛选，再按本次参数重设；无残留不重复点击 `.reset-btn`**，筛选条件不跨命令粘连；有关键词时不传 `--job` 切「不限职位」；城市不在清空范围内（换岗位时平台自己会清）；学历 / 经验 / 年龄是三个独立的单选块（`.degree-ui` / `.exp-list-ui` / `.age-list-ui`，都**不在**「其他筛选」里），院校是多选（`.school-ui`），学历/经验/年龄的「自定义」区间走 `--degree-range` / `--exp-range`（拖 `.experience-select-custom-slider` 的双手柄滑块，按 hidden 的 `min,max` 档位校验纠偏）/ `--age-range`（`.age-custom` 两个下拉，值在 hidden 上：普通年龄存数字、46岁+ 存 10000、不限存 -1）；滑块拖完一律按 hidden 真实档位校验纠偏，且不许拖过对面手柄（两手柄重叠会让按下标取手柄失准）；结果标题里的条件全部实时读页面，不打入参；`preview <姓名>` / `preview [姓名] --index <序号>` 要求当前已在该页且最近一次搜索快照有效，复用搜索的唯一匹配与身份校验，仅以姓名匹配，不用摘要代替姓名，只点击目标姓名入口，不支持 `--job`。 |
+| `/web/chat/interaction` | 互动候选人列表中的「收藏牛人」 | `boss favorite --list`、`boss favorite [姓名] --index <序号> [--remove]` | `--list` 点击已观测的侧栏 `.menu-list a[href^="/web/chat/interaction"]` 进入，再点击 `interactionFrame` 中 `li.tab-item[title="收藏牛人"]` 刷新。已选中时也点击刷新，不读取旧缓存。仅从该标签读取当前已加载结果，创建独立收藏快照；设置或取消要求当前已在该页且快照有效，不自动导航。 |
 | `/web/chat/job/list` | 职位管理列表 | `boss positions`、`boss jd <name>` | `positions` 或未命中本地缓存的 `jd` 通过侧栏进入职位管理页后读取；`jd` 缓存位于 `~/.boss-cli/jd/`，命中时直接返回文件内容，不连接浏览器或导航。当前列表 frame 为 `/web/frame/job_v2/list`，卡片根为 `.job-item-container`。只匹配该 frame URL，不扫描后台搜索 frame。统计大于零但卡片未加载、或主页面已离开职位页时拒绝成功输出。 |
 
 ## 约定
@@ -27,11 +28,35 @@
 - `version` 显示当前安装包名和版本并检查 npm；`update` 通过 npm 全局更新当前安装包，本 fork 为 `@viyzhu/boss-cli-fork`。
 - 浏览器默认有头且跨命令常驻。`BOSS_BROWSER_HEADLESS` 的有效值优先于 `RECRUIT_BROWSER_HIDDEN`；修改配置不影响已运行的实例，须先 `boss shutdown` 再执行下一条业务命令。`shutdown` 保留浏览器数据目录，登录是否仍有效以平台为准。
 - `jd` 先按请求名称查找 `~/.boss-cli/jd/` 下的 Markdown 缓存，命中即返回；无过期时间或刷新参数。`reload` 不更新 JD 缓存。
-- `action resume` 和 `preview` 直接读取在线简历，无须先索要附件或等对方回复；推荐/搜索预览也无须先 `greet`。默认保存 PNG 并输出截图路径，目录为 `~/.boss-cli/.cache/resume-screenshots/`。OCR 默认关闭，显式设置 `BOSS_RESUME_OCR=1` 并配置百度密钥后才启用；OCR 为截图识别文本，不是结构化简历 JSON；页面折叠的“查看全部”等内容不会自动展开，不能据此声称已取到全文。开启 OCR 后仍输出截图路径；截图警告与失败原因保留。
+- `action resume` 和 `preview` 直接读取在线简历，无须先索要附件或等对方回复；推荐/搜索预览也无须先 `greet`。默认保存 PNG 并输出截图路径，目录为 `~/.boss-cli/.cache/resume-screenshots/`。OCR 默认关闭，显式设置 `BOSS_RESUME_OCR=1` 并配置百度密钥后才启用；OCR 为截图识别文本，不是结构化简历 JSON；页面折叠的“查看全部”等内容不会自动展开，不能据此声称已取到全文。开启 OCR 后仍输出截图路径；截图警告与失败原因保留。`preview` 成功输出不附加固定的每日额度提醒。OCR 失败仍报错，错误保留已保存 PNG 的绝对路径和 OCR 原因。
 - `preview [姓名] --index <序号>` 使用最近一次 `recommend` / `search` 的 1-based 序号，姓名与序号同时提供时必须匹配同一人；姓名匹配多张卡片时拒绝。两种列表快照有效期均为 15 分钟，缺失、过期、页面刷新、卡片重建、列表换序或资料变化后必须重新执行对应列表命令，不自动重搜。推荐按全列表统一编号，分组不重置序号。`preview` 不支持 `--job`；旧深搜不支持序号预览。
 - `chat` 输出仅覆盖当前已加载聊天消息；“附件简历消息：未发现”只表示这些消息里没有附件卡片，不表示在线简历不可读。纯简历卡片会话可正常读取，不要求先发送文字。
 - `action request-attachment-resume` 和 `action agree-resume` 是向候选人索取附件/同意接收请求的独立操作，不是在线简历的前提。当前没有附件下载命令，也没有按 `resume_id` 或跨来源 ID 读取简历的接口。
 - `send` 返回“文本已提交发送（未确认送达）”，仅证明已按发送键。`send --request-resume` 的后续操作失败时，错误保留文本已提交的事实和原因，须核对聊天记录，不能直接重跑整条命令。
+
+## 收藏命令的来源与确认
+
+`boss favorite <姓名>` 或 `boss favorite [姓名] --index <序号>` 将唯一目标设为已收藏。`--remove` 将目标设为未收藏。状态已满足时不点击，重复执行不会反转状态。来源由当前主页面 URL 唯一判定，不提供 `--source`。
+
+| 当前主页面 | 序号来源 | 列表与详情 |
+| --- | --- | --- |
+| `/web/chat/search` | 最近一次带关键词的 `boss search` | `searchFrame` 的 `.geek-info-card`。卡片 `props.geek.geekCard.encryptGeekId` 必须与主文档可见 `.resume-simple-box` 的 `props.geekInfo.encryptGeekId` 一致。真实状态为 `props.alreadyInterested` 数值 0 或 1。 |
+| `/web/chat/recommend` | 最近一次 `boss recommend` | `recommendFrame` 的 `.candidate-card-wrap:not(.anonymous-geek-guide-card)`。卡片 `props.geekInfo.encryptGeekId` 必须与同 frame 可见详情的 `props.personInfo.encryptGeekId` 一致。真实状态为详情组件 `$data.enshrineGeek` 布尔值，且 `$data.isLikeLoading` 为 false。当前卡片没有 `data-geekid` 属性。 |
+| `/web/chat/interaction` | 最近一次 `boss favorite --list` | `interactionFrame`，frame path 为 `/web/frame/recommend/interaction`。标签 `li.tab-item[title="收藏牛人"]` 选中类为 `curr`，状态为 9，卡片根为 `.candidate-card-wrap`。卡片 ID、详情位置及状态字段与推荐同型。外层 `.card-item` 不计数。 |
+
+推荐与收藏从卡片根的 Vue 实例及其直接子组件中，按 `$options.name === "RecommendCandidateCard"` 且 `$el` 等于原卡片 DOM 唯一确定拥有者，再读取其 `props.geekInfo`。根 `__vue__` 在重绘后可能指向包装组件，不能直接把它当作身份来源。拥有者不唯一或不属于该卡片时拒绝操作；合法的数据与组件初始化在有界等待内完成，不以姓名或其他 ID 字段替代。
+
+三种列表的编号不能混用。快照有效期 15 分钟，保存原卡片 DOM、平台 ID、完整可读资料与顺序。姓名必须唯一匹配，同时提供姓名和序号时必须指向同一人。缺失、过期、页面或 frame 换绑、列表重建、换序、ID 或资料变化均拒绝操作，不重搜、不按同名重找。
+
+收藏命令开始先通过 `closeCResumePanel(page)` 关闭已有在线简历遮罩，确认关净后才打开新详情或进入只读收藏列表。设置事务无论成功或失败均关闭本次详情。关闭失败仍报错，保留已确认的收藏结果或原操作错误，不把操作重做一遍。
+
+推荐与收藏共用的 frame 获取逻辑将 `contentFrame()` 尚无 URL 视为初始化未完成，在既有有界轮询内等待对应的已确认路径。非空无效 URL 报出来源、实际 URL 和目标路径，不导航回退或重试整条命令。
+
+详情只读取唯一可见 `.resume-simple-box`。三个来源的收藏控件均为 `.like-icon-and-text > .like-icon`，旁边 `.btn-text` 为「收藏」或「已收藏」。真实状态、图标 `.like-icon-active` 和文本必须一致。操作前再次核对来源与详情 ID，需要变更时仅点击一次，等待并复核终态。身份失配、状态未知、加载未结束或结果未确认均报错。
+
+`--list` 不能与姓名、`--index` 或 `--remove` 同用。列表就绪要求 `.list-wrap.card-list-wrap` 的 Vue `props.loading=false`、`error=false`，且 `.card-list` 的 `props.pageList` 数目与卡片一致，资料连续 500ms 稳定。`finished=false` 且有条目时仅输出当前已加载结果，明确仍有未加载内容。零条目必须同时满足 `finished=true` 与空 `pageList`，才报告空列表。沟通页的「收藏」标签和牛人管理页均不作为全局收藏入口。
+
+从收藏列表取消后，确认允许本次取消引起的列表变化，仍核对原 URL、frame、快照身份和详情 ID。写入前保留完整快照校验。确认取消后作废收藏快照，后续编号须重新执行 `boss favorite --list`，避免误操作移位后的下一人。搜索和推荐不会放宽列表校验。
 
 ## 深度搜索暂不可用
 
