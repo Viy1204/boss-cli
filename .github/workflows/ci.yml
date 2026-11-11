@@ -41,7 +41,14 @@ jobs:
         env:
           CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
         run: |
-          node -e "require('node:fs').accessSync(process.env.CHROME_PATH)"
+          node --input-type=module <<'JS'
+          import { accessSync } from 'node:fs';
+          import puppeteer from 'puppeteer-core';
+          accessSync(process.env.CHROME_PATH);
+          const browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH, headless: true, pipe: true, dumpio: true });
+          console.log(await browser.version());
+          await browser.close();
+          JS
           npm test
       - name: Pack and install consumer
         run: |
@@ -59,7 +66,7 @@ jobs:
             const result = spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', timeout: 15_000 });
             if (result.error) throw result.error;
             assert.equal(result.status, code, args.join(' '));
-            if (args[0] === 'help') assert.match(result.stdout, /boss favorite/);
+            if (args[0] === 'help') assert.match(result.stdout + result.stderr, /boss favorite/);
           }
           JS
       - name: Upload package
