@@ -130,10 +130,20 @@ const frameScript = source => `(() => {
     }, 25);
   };
   renderCards();
-  window.__fixtureReady = true;
+  if (state.bootstrapRafStopped) {
+    let ready = false;
+    let started = false;
+    window.requestAnimationFrame = () => 0;
+    Object.defineProperty(window, '__fixtureReady', { get: () => {
+      if (!started) { started = true; setTimeout(() => { ready = true; }, 50); }
+      return ready;
+    } });
+  } else {
+    window.__fixtureReady = true;
+  }
 })()`;
 
-async function fixture(t, source = 'search', { pendingFrameUrls = [] } = {}) {
+async function fixture(t, source = 'search', { pendingFrameUrls = [], bootstrapRafStopped = false } = {}) {
   const page = await browser.newPage();
   t.after(() => page.close());
   await page.setRequestInterception(true);
@@ -144,7 +154,7 @@ async function fixture(t, source = 'search', { pendingFrameUrls = [] } = {}) {
     let html;
     if (Object.values(routes).includes(url.pathname)) {
       html = '<!doctype html><meta charset="utf-8"><style>iframe{width:900px;height:650px}.resume-simple-box{width:300px;height:180px}.like-icon{width:24px;height:24px}</style><div class="menu-list"><a href="/web/chat/interaction">互动</a></div>' +
-        '<script>window.__fixture={people:[{id:"candidate-1",name:"张**"},{id:"candidate-2",name:"张**"},{id:"candidate-3",name:"李四"}],saved:' + JSON.stringify(source === 'favorites' ? { 'candidate-1': true, 'candidate-2': true } : {}) + ',opens:[],favoriteClicks:[],contacts:0,listRefreshes:0};</script>' +
+        '<script>window.__fixture={people:[{id:"candidate-1",name:"张**"},{id:"candidate-2",name:"张**"},{id:"candidate-3",name:"李四"}],saved:' + JSON.stringify(source === 'favorites' ? { 'candidate-1': true, 'candidate-2': true } : {}) + ',opens:[],favoriteClicks:[],contacts:0,listRefreshes:0,bootstrapRafStopped:' + JSON.stringify(bootstrapRafStopped) + '};</script>' +
         '<iframe name="searchFrame" src="/web/frame/search"></iframe><iframe name="recommendFrame" src="/web/frame/recommend/"></iframe><iframe name="interactionFrame" src="/web/frame/recommend/interaction"></iframe>' +
         '<script>window.route=()=>{for(const f of document.querySelectorAll("iframe"))f.style.display=(f.name===(location.pathname.endsWith("search")?"searchFrame":location.pathname.endsWith("recommend")?"recommendFrame":"interactionFrame"))?"block":"none"};document.querySelector("a").onclick=e=>{e.preventDefault();history.pushState({},"","/web/chat/interaction");route()};route();</script>';
     } else if (url.pathname === '/web/frame/c-resume/') {
@@ -157,7 +167,7 @@ async function fixture(t, source = 'search', { pendingFrameUrls = [] } = {}) {
     void request.respond({ status: 200, contentType: 'text/html; charset=utf-8', body: html });
   });
   await page.goto('https://www.zhipin.com' + routes[source]);
-  for (const frame of page.frames().filter(frame => frame !== page.mainFrame())) await frame.waitForFunction('window.__fixtureReady === true');
+  for (const frame of page.frames().filter(frame => frame !== page.mainFrame())) await frame.waitForFunction('window.__fixtureReady === true', { polling: 100 });
   const shorten = target => new Proxy(target, { get(object, key) {
     if (key === 'waitForFunction') return (script, settings) => object.waitForFunction(script, { ...settings, timeout: settings?.timeout === 8_000 ? 350 : Math.min(settings?.timeout ?? 18_000, 2_000) });
     if (key === 'waitForSelector') return async (selector, settings) => {
@@ -204,6 +214,13 @@ async function fixture(t, source = 'search', { pendingFrameUrls = [] } = {}) {
   });
   return { page, frame, api, seed, set, residue, state: () => page.evaluate('JSON.parse(JSON.stringify(window.__fixture))') };
 }
+
+test('夹具动画帧停转且就绪延迟时仍完成收藏验证', options, async t => {
+  const f = await fixture(t, 'search', { bootstrapRafStopped: true });
+  await f.seed();
+  assert.match(await f.set(), /已收藏/);
+  assert.deepEqual((await f.state()).favoriteClicks, ['candidate-2']);
+});
 
 for (const source of ['search', 'recommend', 'favorites']) {
   test(source + ' 同名必须指定序号，姓名与序号冲突时零点击', options, async t => {
