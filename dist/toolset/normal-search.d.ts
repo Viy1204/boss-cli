@@ -212,6 +212,8 @@ export type SearchPoolChatModeState = {
     /** 当前选中项文案，如「使用账号权益进行沟通」/「使用畅聊卡进行沟通」 */
     current: string;
     options: string[];
+    /** selector = 旧版开聊模式下拉；account-button = 新版详情面板只有账号权益按钮 */
+    source?: 'selector' | 'account-button';
 };
 export declare function readSearchPoolChatMode(page: Page): Promise<SearchPoolChatModeState>;
 /**

@@ -66,9 +66,12 @@ function fixture(config = {}) {
   const wrap = new El();
   wrap.querySelectorAll = sel => sel === '.chat-mode' ? modes : [];
   wrap.querySelector = sel => sel === '.chat-mode.checked' ? modes[state.mode === 'account' ? 0 : 1] : null;
+  const accountBtn = new El('立即沟通(30/200)', 'btn-v2 position-rights btn-sure-v2 btn-v2-new');
+  const panelRoot = new El();
+  panelRoot.querySelectorAll = sel => sel === 'button' ? [accountBtn] : [];
   let searchIframe;
   const pageDoc = {
-    querySelector: sel => sel === 'iframe[name="searchFrame"]' ? searchIframe : sel === '.change-chat-mode-wrap' ? state.detail && !config.missingMode ? wrap : null : sel.includes('common-job-list-dialog') ? state.dialog : null,
+    querySelector: sel => sel === 'iframe[name="searchFrame"]' ? searchIframe : sel === '.change-chat-mode-wrap' ? state.detail && !config.missingMode ? wrap : null : sel === '.resume-right-side' ? state.detail && config.newAccountOnly ? panelRoot : null : sel.includes('common-job-list-dialog') ? state.dialog : null,
     querySelectorAll: sel => sel === 'iframe[name="searchFrame"]' ? [searchIframe] : sel.includes('common-job-list-dialog') && state.dialog ? [state.dialog] : [],
   };
   const secondName = new El('张**');
@@ -247,6 +250,21 @@ test('账号权益弹层不代表耗尽，正常确认一次且不切卡', async
   const f = fixture(); const result = await greet(f);
   assert.equal(f.state.confirms, 1); assert.deepEqual(f.state.switches, []); assert.equal(f.state.contacts, 1);
   assert.match(result, /已提交账号权益确认/); assert.match(result, /结果未确认/); assert.doesNotMatch(result, /已确认发出|消耗一张/);
+});
+// 2026-11 平台改版：详情面板不再渲染「选择开聊模式」，只保留「立即沟通(N/M)」按钮。
+// 没有畅聊卡时本来就没有切卡控件，不能因此把正常账号权益沟通判成「模式未知」。
+test('新版详情面板没有开聊模式下拉时，按账号权益按钮继续沟通', async () => {
+  const f = fixture({ newAccountOnly: true, missingMode: true });
+  const result = await greet(f);
+  assert.equal(f.state.contacts, 1);
+  assert.equal(f.state.confirms, 1);
+  assert.deepEqual(f.state.switches, []);
+  assert.match(result, /已提交账号权益确认/);
+});
+test('新版面板没有畅聊卡控件时，账号权益明确不足必须停止', async () => {
+  const f = fixture({ newAccountOnly: true, missingMode: true, exhausted: true });
+  await assert.rejects(greet(f), /无法切换开聊模式|无法识别/);
+  assert.equal(f.state.confirms, 0);
 });
 test('旧持久模式为卡时，正式发送先验证切回账号权益', async () => {
   const f = fixture({ initialCard: true }); await greet(f);
