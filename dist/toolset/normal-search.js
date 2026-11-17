@@ -1429,6 +1429,8 @@ async function clickSearchPoolContactButton(frame, selection) {
   })()`));
 }
 const CHAT_MODE_WRAP_SELECTOR = '.change-chat-mode-wrap';
+const ACCOUNT_MODE_LABEL = '使用账号权益进行沟通';
+const ACCOUNT_RIGHTS_BUTTON_PATTERN = '^立即沟通\\(\\d+\\/\\d+\\)$';
 const READ_CHAT_MODE_SCRIPT = `(() => {
   const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
   const wrap = document.querySelector(${JSON.stringify(CHAT_MODE_WRAP_SELECTOR)});
@@ -1441,8 +1443,27 @@ const READ_CHAT_MODE_SCRIPT = `(() => {
     options: modes.map((m) => norm(m.textContent)),
   };
 })()`;
+const READ_ACCOUNT_RIGHTS_BUTTON_SCRIPT = `(() => {
+  const norm = (v) => (v ?? "").replace(/\\s+/g, " ").trim();
+  const panel = document.querySelector('.resume-right-side') ||
+    document.querySelector('.resume-simple-box') ||
+    document.querySelector('.resume-item-detail');
+  if (!panel) return false;
+  const btn = Array.from(panel.querySelectorAll('button')).find((b) =>
+    new RegExp(${JSON.stringify(ACCOUNT_RIGHTS_BUTTON_PATTERN)}).test(norm(b.textContent)));
+  return Boolean(btn);
+})()`;
 export async function readSearchPoolChatMode(page) {
-    return (await page.evaluate(READ_CHAT_MODE_SCRIPT));
+    const state = (await page.evaluate(READ_CHAT_MODE_SCRIPT));
+    if (state.present)
+        return state;
+    // 2026-11 平台改版：详情面板不再渲染「选择开聊模式」下拉，只显示
+    // 「立即沟通(N/M)」按钮；没有畅聊卡时本来就不该有切卡控件。
+    // 用详情面板上的账号权益按钮反推当前为账号权益模式，避免误判为面板未打开。
+    if (await page.evaluate(READ_ACCOUNT_RIGHTS_BUTTON_SCRIPT)) {
+        return { present: true, current: ACCOUNT_MODE_LABEL, options: [ACCOUNT_MODE_LABEL], source: 'account-button' };
+    }
+    return state;
 }
 /** 悬停详情面板的 caret，展开「选择开聊模式」浮层（`.chat-modes` 初始 display:none）。 */
 const REVEAL_CHAT_MODE_POPOVER_SCRIPT = `(() => {
@@ -1472,7 +1493,17 @@ function pickChatModeScript(mode) {
 export async function ensureSearchPoolChatMode(page, mode) {
     const pattern = mode === 'card' ? '^使用畅聊卡进行沟通$' : '^使用(?:VVIP)?账号权益进行沟通$';
     const matches = (text) => new RegExp(pattern).test(text);
-    const before = await readSearchPoolChatMode(page);
+    let before = await readSearchPoolChatMode(page);
+    if (!before.present) {
+        // 新版详情面板比详情点击晚渲染：短等「立即沟通(N/M)」按钮出现。
+        // 用固定次数而不是 wall-clock，测试里 setTimeout 被压缩时也不会空转。
+        for (let attempt = 0; attempt < 12; attempt += 1) {
+            await sleepRandom(150, 250);
+            before = await readSearchPoolChatMode(page);
+            if (before.present)
+                break;
+        }
+    }
     if (!before.present || !before.current)
         throw new Error('无法识别详情面板当前开聊模式；停止操作。');
     if (matches(before.current))
