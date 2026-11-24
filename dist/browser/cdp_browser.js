@@ -589,21 +589,12 @@ export async function connectBrowser(options = {}) {
         throw e;
     }
 }
-/**
- * 是否禁止 CLI 把 Boss 窗口抢到前台。
- *
- * 默认允许：`page.bringToFront()` 走 `Target.activateTarget`，Windows 上会把**最小化**的窗口
- * 还原并夺取前台焦点。把 CLI 接进后台系统定时跑的人（例如把 boss-cli 打通到内部招聘系统）
- * 会被每条命令弹一次窗口打断办公，所以给一个显式关闭项。
- */
 export function resolveNoForegroundFromEnv() {
     const v = process.env.BOSS_BROWSER_NO_FOREGROUND?.trim().toLowerCase();
-    return v === 'true' || v === '1' || v === 'yes' || v === 'y';
+    if (v === 'false' || v === '0' || v === 'no' || v === 'n')
+        return false;
+    return true;
 }
-/**
- * 判定这次要不要抢前台：环境变量关了 → 不抢；窗口已被人最小化 → 不抢（尊重人的选择）；
- * 其余情况照旧。抽出来是为了让判定逻辑不依赖真实浏览器就能测。
- */
 export function decideBringToFront(windowState, noForeground) {
     if (noForeground)
         return 'skipped-env';
@@ -611,10 +602,6 @@ export function decideBringToFront(windowState, noForeground) {
         return 'skipped-minimized';
     return 'raised';
 }
-/**
- * `page.bringToFront()` 的替代：先问 `Browser.getWindowForTarget` 窗口状态，最小化就不动它。
- * 单标签窗口下不抢前台对自动化没有影响；CDP 操作不需要窗口可见。
- */
 export async function bringToFrontUnlessMinimized(page) {
     const noForeground = resolveNoForegroundFromEnv();
     let windowState;
